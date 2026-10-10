@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ModelScout —— JSON 语法门禁（阶段 5 QA 系统性检查）
+ModelScout —— JSON 语法校验（阶段 5 QA 系统性检查）
 =====================================================
 
 【为什么需要这个脚本】
@@ -15,7 +15,7 @@ JSON 标准**不允许注释**，而 Tauri 用 serde_json 做严格解析。
 它不会导致编译失败，而是让运行期的外部字典加载**静默退化为内嵌字典** ——
 这种隐性故障靠肉眼几乎不可能发现。
 
-因此把「JSON 文件必须是严格合法 JSON」做成脚本门禁，
+因此把「JSON 文件必须是严格合法 JSON」做成脚本校验，
 比留在交付报告的「注意事项」里可靠得多。
 
 【豁免名单】
@@ -37,7 +37,7 @@ from pathlib import Path
 # ---- 让中文状态信息在任何输出环境下都打得出来 ----
 # Windows 上 stdout 被重定向时（CI 日志 / 管道 / `> 文件`），Python 按系统 ANSI
 # 代码页编码输出 —— en-US 环境是 cp1252，编码不了中文，第一句 print 就抛
-# UnicodeEncodeError 把整个门禁搞挂（GitHub Actions 的 windows runner 实测踩到）。
+# UnicodeEncodeError 把整个校验搞挂（GitHub Actions 的 windows runner 实测踩到）。
 # 本地中文 Windows 控制台代码页是 GBK，能编码中文，所以本地一直没暴露。
 #
 # 为什么无条件切、不判断 isatty：
@@ -72,7 +72,7 @@ def is_skipped(path: Path) -> bool:
 
 def main() -> int:
     print("=" * 72)
-    print("ModelScout —— JSON 语法门禁")
+    print("ModelScout —— JSON 语法校验")
     print("=" * 72)
 
     checked = 0
@@ -123,7 +123,7 @@ def main() -> int:
         return 1
 
     print()
-    print("✓ JSON 语法门禁全部通过")
+    print("✓ JSON 语法校验全部通过")
     return 0
 
 

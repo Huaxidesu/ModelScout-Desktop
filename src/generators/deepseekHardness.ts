@@ -428,7 +428,7 @@ function tomlString(input: string): string {
  * 校验生成结果中不存在未替换的占位符。
  *
  * 与 opencode.ts 的同名函数保持一致的检查项，
- * 保证「无残留 {{}}」这条门禁对两个生成器都生效。
+ * 保证「无残留 {{}}」这条校验对两个生成器都生效。
  */
 export function validateNoPlaceholders(output: string): string[] {
   const problems: string[] = []

@@ -474,8 +474,8 @@ function stringifyEntry(value: unknown, indentSpaces: number): string {
 /**
  * 校验生成结果中不存在未替换的占位符。
  *
- * 任务书阶段 4 门禁要求：「模板中的占位符全部被正确替换，无残留 {{}}」。
- * 本函数就是这条门禁的可执行化。
+ * 任务书阶段 4 校验要求：「模板中的占位符全部被正确替换，无残留 {{}}」。
+ * 本函数就是这条校验的可执行化。
  */
 export function validateNoPlaceholders(output: string): string[] {
   const problems: string[] = []

@@ -1,12 +1,12 @@
 # ============================================================================
 # ModelScout —— 持续集成
 #
-# 把项目里那 5 道「手动门禁」固化到 CI，避免改动后忘记跑：
+# 把项目里那 5 道「手动校验」固化到 CI，避免改动后忘记跑：
 #   ① 前端类型检查  vue-tsc --noEmit -p tsconfig.app.json
 #   ② 前端构建      vite build
 #   ③ Rust 编译     cargo check
 #   ④ Rust 单元测试 cargo test
-#   ⑤ 静态门禁      check_json.py（JSON 语法）+ cross_check.py（契约一致性）
+#   ⑤ 静态校验      check_json.py（JSON 语法）+ cross_check.py（契约一致性）
 #
 # 为什么用 windows-latest：
 #   本项目的开发与验证环境就是 Windows + MSVC，且 Tauri v2 在 Windows 上
@@ -28,7 +28,7 @@ env:
   #
   # GitHub 的 windows runner 是 en-US 环境，Python 的 stdout 默认按系统 ANSI
   # 代码页编码 —— 那里是 cp1252，编码不了中文。而 scripts/ 下的脚本全都会
-  # 打印中文状态信息，于是第一句 print 就抛 UnicodeEncodeError 把门禁搞挂：
+  # 打印中文状态信息，于是第一句 print 就抛 UnicodeEncodeError 把校验搞挂：
   #
   #   UnicodeEncodeError: 'charmap' codec can't encode characters in position 19-22
   #
@@ -38,7 +38,7 @@ env:
   # PYTHONUTF8 是 Python 官方的 UTF-8 模式开关（PEP 540），在这里设一次
   # 就能覆盖后面所有 python 调用，不用逐个脚本改。
   # 脚本内部另有一层兜底（见 scripts/*.py 顶部的 reconfigure），
-  # 两层任缺其一都不至于让门禁因为一句状态信息失败。
+  # 两层任缺其一都不至于让校验因为一句状态信息失败。
   PYTHONUTF8: '1'
 
 on:
@@ -54,7 +54,7 @@ concurrency:
 
 jobs:
   verify:
-    name: 门禁校验（Windows）
+    name: 校验（Windows）
     runs-on: windows-latest
 
     steps:
@@ -115,8 +115,8 @@ jobs:
         working-directory: src-tauri
         run: cargo test --locked
 
-      # ---------------- 静态门禁 ----------------
-      - name: ⑤a JSON 语法门禁
+      # ---------------- 静态校验 ----------------
+      - name: ⑤a JSON 语法校验
         run: python scripts/check_json.py
 
       - name: ⑤b 契约交叉核对

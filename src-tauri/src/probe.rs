@@ -48,7 +48,7 @@ use crate::models::{
 ///
 /// **为什么要这层抽象**：`run_engine` 原本直接依赖 `AppHandle`，
 /// 导致它**无法在没有 Tauri 应用的场景下被测试** ——
-/// D-37 那个「界面永远 0/0」的 bug 正因如此逃过了全部门禁。
+/// D-37 那个「界面永远 0/0」的 bug 正因如此逃过了全部校验。
 ///
 /// 引入本 trait 后：
 ///   - 生产环境传 [`TauriSink`]（内部就是 `AppHandle::emit`）；
@@ -2130,7 +2130,7 @@ mod tests {
     /// 而日志里每个模型都显示「完成」。
     ///
     /// 此前 36 个单测全是纯函数测试（解析 / 正则 / 脱敏…），
-    /// **没有任何一个覆盖这条路径**，所以那个 bug 才逃过了全部门禁。
+    /// **没有任何一个覆盖这条路径**，所以那个 bug 才逃过了全部校验。
     #[tokio::test]
     async fn collect_results_returns_every_finished_model() {
         let state = RunState::new("run-test".to_string(), 2);

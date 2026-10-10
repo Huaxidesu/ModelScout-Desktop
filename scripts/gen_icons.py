@@ -15,7 +15,7 @@ import sys
 # ---- 让中文状态信息在任何输出环境下都打得出来 ----
 # Windows 上 stdout 被重定向时（CI 日志 / 管道 / `> 文件`），Python 按系统 ANSI
 # 代码页编码输出 —— en-US 环境是 cp1252，编码不了中文，第一句 print 就抛
-# UnicodeEncodeError 把整个门禁搞挂（GitHub Actions 的 windows runner 实测踩到）。
+# UnicodeEncodeError 把整个校验搞挂（GitHub Actions 的 windows runner 实测踩到）。
 # 本地中文 Windows 控制台代码页是 GBK，能编码中文，所以本地一直没暴露。
 #
 # 为什么无条件切、不判断 isatty：
