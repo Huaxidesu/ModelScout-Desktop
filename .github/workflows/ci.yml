@@ -1,0 +1,123 @@
+# ============================================================================
+# ModelScout —— 持续集成
+#
+# 把项目里那 5 道「手动门禁」固化到 CI，避免改动后忘记跑：
+#   ① 前端类型检查  vue-tsc --noEmit -p tsconfig.app.json
+#   ② 前端构建      vite build
+#   ③ Rust 编译     cargo check
+#   ④ Rust 单元测试 cargo test
+#   ⑤ 静态门禁      check_json.py（JSON 语法）+ cross_check.py（契约一致性）
+#
+# 为什么用 windows-latest：
+#   本项目的开发与验证环境就是 Windows + MSVC，且 Tauri v2 在 Windows 上
+#   依赖 WebView2（GitHub 的 windows 镜像已预装），无需额外装系统库。
+#   Linux 构建需要 webkit2gtk 等一堆 apt 依赖，与本地环境差异大，收益低。
+#
+# 注意：这里**只做校验**，不产出安装包。
+#   `npm run tauri build` 耗时约 4 分钟且产物无法直接回传到仓库，
+#   发布构建留到需要时手动执行：
+#     CARGO_BUILD_JOBS=2 npm run tauri build
+#   ⚠️ 构建前请先关闭正在运行的 ModelScout —— 否则链接阶段会报
+#      LNK1104（exe 被占用，且 deps/ 下那个是它的硬链接，锁的是同一个文件）。
+# ============================================================================
+
+name: CI
+
+env:
+  # ⚠️ 别删这一行。
+  #
+  # GitHub 的 windows runner 是 en-US 环境，Python 的 stdout 默认按系统 ANSI
+  # 代码页编码 —— 那里是 cp1252，编码不了中文。而 scripts/ 下的脚本全都会
+  # 打印中文状态信息，于是第一句 print 就抛 UnicodeEncodeError 把门禁搞挂：
+  #
+  #   UnicodeEncodeError: 'charmap' codec can't encode characters in position 19-22
+  #
+  # 本地跑没事，是因为中文 Windows 的控制台代码页是 GBK（936），能编码中文 ——
+  # 典型的「我机器上能跑」。
+  #
+  # PYTHONUTF8 是 Python 官方的 UTF-8 模式开关（PEP 540），在这里设一次
+  # 就能覆盖后面所有 python 调用，不用逐个脚本改。
+  # 脚本内部另有一层兜底（见 scripts/*.py 顶部的 reconfigure），
+  # 两层任缺其一都不至于让门禁因为一句状态信息失败。
+  PYTHONUTF8: '1'
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的新推送取消上一次未完成的运行，省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 门禁校验（Windows）
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # ---------------- 前端 ----------------
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: ① 前端类型检查
+        # 注意必须显式指定 tsconfig.app.json：
+        # 根 tsconfig.json 是项目引用壳（files: []），vue-tsc 用它不检查任何文件（见 D-E3）
+        run: npx vue-tsc --noEmit -p tsconfig.app.json
+
+      - name: ①b 前端单元测试（Pinia store）
+        # 覆盖 stores/probe.ts 的事件应用逻辑 —— 即 D-37 那条数据链的「前端那一半」。
+        # 重点锁住两件事：
+        #   1. applySummary 收到空数组时**不得**清空事件路径已填好的结果；
+        #   2. selectedIds 不得累积「幽灵 id」（界面「生成配置（N）」直接用它计数）。
+        run: npm test
+
+      - name: ② 前端构建
+        run: npm run build
+
+      # ---------------- Rust ----------------
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: 缓存 Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: ③ Rust 编译检查
+        working-directory: src-tauri
+        run: cargo check --locked
+
+      - name: ④ Rust 测试（单元 + 集成）
+        # `cargo test` 会跑全部目标：库单测、bin 单测、以及 tests/ 下的集成测试。
+        #
+        # 其中 `tests/engine_integration.rs` 覆盖 `run_engine` 的**结果收集路径**
+        # —— D-37 那个「界面永远 0/0」的 bug 正出在这里。
+        # 已实测：把收集那行注释掉，该测试会以 `left: 0, right: 3` 失败，
+        # 证明它确实能抓到该 bug。
+        #
+        # 集成测试用「记录型事件端口」（EventSink）替代 tauri::test::mock_app()，
+        # 因此不需要 tauri 的 `test` feature（那个 feature 会让测试二进制
+        # 在缺少 Windows 清单时以 STATUS_ENTRYPOINT_NOT_FOUND 启动失败，见 D-37）。
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      # ---------------- 静态门禁 ----------------
+      - name: ⑤a JSON 语法门禁
+        run: python scripts/check_json.py
+
+      - name: ⑤b 契约交叉核对
+        run: python scripts/cross_check.py

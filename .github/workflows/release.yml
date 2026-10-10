@@ -1,0 +1,366 @@
+# ============================================================================
+# ModelScout —— 发布构建（手动触发）
+# ============================================================================
+#
+# 做什么：
+#   1. 在 Actions 页面手动点「Run workflow」
+#   2. 并行构建 Windows 与 Linux 产物
+#   3. 全部成功后**自动创建 / 更新 GitHub Release 并上传产物**
+#
+# 产物清单：
+#   Windows   ModelScout-<版本>-windows-x64-portable.zip   ← 免安装版，解压双击即用
+#             ModelScout_<版本>_x64-setup.exe              ← NSIS 安装包
+#   Linux     ModelScout_<版本>_amd64.AppImage             ← 免安装，chmod +x 即用
+#             ModelScout_<版本>_amd64.deb                  ← Debian / Ubuntu 安装包
+#
+# 【为什么免安装版要手工组装】
+#   Tauri 的 `bundle.targets` 只接受 deb / rpm / appimage / nsis / msi / app / dmg
+#   （已对官方 schema 核实）—— **没有 portable 或 zip 目标**。
+#   所以「解压即用」包必须在构建完成后自己拼：
+#     1. 取 target/release/modelscout.exe（Tauri 把前端资源**编进二进制**，
+#        所以它是自包含的，不依赖任何同目录文件）
+#     2. 改名成 ModelScout.exe —— 与 NSIS 安装后的名字一致
+#     3. 带上 resources/model_params.json（参数字典，用户可编辑扩充）
+#     4. 带上 LICENSE（PolyForm Noncommercial 要求分发时附带条款）
+#     5. 带上 README.txt（源文件在 packaging/portable-readme.txt）
+#
+#   ⚠️ **不打包 WebView2 安装器**。
+#      程序启动时会自己检查运行库，缺了就弹中文提示并一键打开微软官网
+#      （见 src-tauri/src/webview2.rs）。把约 1.8 MB 的安装器塞进包里，
+#      对绝大多数用户（Win11 与较新的 Win10 已自带）是纯粹的浪费。
+#
+#   ⚠️ 组装脚本里不能写非 ASCII 字面量 —— 原因见该步骤内的注释。
+#
+# 【平台差异由 Tauri 自动处理】
+#   tauri.conf.json 的 targets 写了三个，但 Tauri 会**按当前平台静默过滤**：
+#   Windows 上只出 NSIS，Linux 上只出 deb + AppImage。
+#   本地已验证（Windows 构建输出 `Finished 1 bundle`），无需平台专属配置文件。
+# ============================================================================
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布标签（留空则自动使用 v<package.json 版本号>）'
+        required: false
+        default: ''
+      draft:
+        description: '创建为草稿（先不公开）'
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: '标记为预发布'
+        required: false
+        type: boolean
+        default: false
+
+# 创建 Release 需要写权限
+permissions:
+  contents: write
+
+# 发布流程不做「取消旧运行」—— 半途取消会留下不完整的 Release
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # --------------------------------------------------------------------------
+  # 准备：解析版本号与标签，并跑一遍前端测试作为发布门禁
+  # --------------------------------------------------------------------------
+  prepare:
+    name: 准备与门禁
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 解析版本号与标签
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(grep -m1 '"version"' package.json \
+            | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+          if [ -z "$version" ]; then
+            echo "::error::无法从 package.json 解析出版本号"
+            exit 1
+          fi
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then
+            tag="v$version"
+          fi
+          echo "版本号：$version"
+          echo "发布标签：$tag"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 发布门禁 —— 前端单元测试
+        # 宁可构建前多花 20 秒，也不要把一份测试不过的产物发出去
+        run: npm test
+
+  # --------------------------------------------------------------------------
+  # Windows：NSIS 安装包 + 免安装版 zip
+  # --------------------------------------------------------------------------
+  build-windows:
+    name: 构建 Windows
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建（NSIS 安装包 + 独立 exe）
+        # `--ci` 跳过交互提示；`-- --locked` 把 --locked 透传给 cargo，
+        # 保证用的是 Cargo.lock 里锁定的依赖版本（可复现构建）
+        run: npx tauri build --ci -- --locked
+
+      - name: 组装免安装版压缩包
+        shell: pwsh
+        # ⚠️ 本步骤的 run 脚本必须**整段纯 ASCII**（注释也不例外）。
+        #
+        # 踩过的坑：最初把「使用说明」的中文直接写成 PowerShell 字符串数组，
+        # 结果脚本文件落盘时的编码与 PowerShell 读取时的编码假设不一致，
+        # 中文被当成 GBK 解析 —— `'1. 解压整个文件夹'` 变成
+        # `'1. 瑙ｅ帇鏁翠釜鏂囦欢澶癸紙'`，引号配对错乱，
+        # 整段脚本直接 ParseException 起不来。
+        #
+        # 根源是「run 块 → 临时脚本文件 → 解释器」这条链上的编码是隐式约定，
+        # 不同 PowerShell 版本默认值还不一样（5.1 按 ANSI 读无 BOM 的 .ps1，
+        # 7.x 按 UTF-8 读）。与其赌版本行为，不如让脚本本身只含 ASCII：
+        #   中文说明文本 → packaging/portable-readme.txt（UTF-8 带 BOM）
+        #   脚本只做 Copy-Item —— 拷贝按字节复制，编码不会被改写
+        #
+        # 注意：bash 步骤不受此限制（bash 不按编码解码脚本，中文当字节流处理），
+        # 所以下面 Linux / release 的 run 块里可以有中文。
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = "${{ needs.prepare.outputs.version }}"
+          $stage   = "ModelScout-$version-windows-x64-portable"
+          $outDir  = "dist-portable"
+          $dest    = Join-Path $outDir $stage
+
+          New-Item -ItemType Directory -Force -Path (Join-Path $dest 'resources') | Out-Null
+
+          # exe: Tauri embeds the frontend bundle into the binary -> self-contained
+          Copy-Item 'src-tauri/target/release/modelscout.exe' (Join-Path $dest 'ModelScout.exe')
+          # model params dictionary: the app reads <exe dir>/resources/ first
+          Copy-Item 'src-tauri/resources/model_params.json'  (Join-Path $dest 'resources/model_params.json')
+          # license text: CC BY-NC-SA requires shipping the terms when distributing
+          Copy-Item 'LICENSE'                                 (Join-Path $dest 'LICENSE')
+          # usage notes: source file already carries a UTF-8 BOM, copy is byte-exact
+          Copy-Item 'packaging/portable-readme.txt'           (Join-Path $dest 'README.txt')
+
+          Compress-Archive -Path $dest `
+            -DestinationPath (Join-Path $outDir "$stage.zip") `
+            -CompressionLevel Optimal
+
+          Get-ChildItem $outDir | Format-Table Name, Length
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            dist-portable/*.zip
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------------
+  # Linux：deb + AppImage
+  # --------------------------------------------------------------------------
+  build-linux:
+    name: 构建 Linux
+    needs: prepare
+    # 固定 22.04：glibc 版本较旧，产物能在更多发行版上跑
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装系统依赖
+        # Tauri v2 在 Linux 上的构建依赖，缺一个都会在链接阶段失败
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建（deb + AppImage）
+        # Tauri 会自动跳过 targets 里不适用于 Linux 的 nsis
+        run: npx tauri build --ci -- --locked
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------------
+  # 发布：把两个平台的产物汇总成一个 Release
+  # --------------------------------------------------------------------------
+  release:
+    name: 发布到 Releases
+    needs: [prepare, build-windows, build-linux]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 收集全部产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          # 把各 job 的产物摊平到同一层，方便后面直接 glob
+          merge-multiple: true
+
+      - name: 列出待发布文件
+        run: ls -lh artifacts
+
+      - name: 生成发布说明
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # 文件清单**从实际产物生成**，不硬编码文件名。
+          # 硬编码的表格在 Tauri 改了 deb / AppImage 命名规则之后会悄悄说谎，
+          # 而用户是照着这张表去点下载的 —— 宁可多几行脚本。
+          {
+            echo "## 下载"
+            echo
+            echo "| 文件 | 大小 | 说明 |"
+            echo "|---|---|---|"
+            for f in artifacts/*; do
+              name=$(basename "$f")
+              size=$(du -h "$f" | cut -f1)
+              case "$name" in
+                *windows-x64-portable.zip) desc="**免安装版** —— 解压后双击 ModelScout.exe 即可运行" ;;
+                *.exe)                     desc="NSIS 安装包（当前用户安装，无需管理员）" ;;
+                *.AppImage)                desc="**免安装** —— chmod +x 后双击运行" ;;
+                *.deb)                     desc="Debian / Ubuntu 安装包" ;;
+                *)                         desc="—" ;;
+              esac
+              echo "| \`$name\` | $size | $desc |"
+            done
+          } > notes.md
+
+          cat >> notes.md <<'BODY'
+
+          ## 运行要求
+
+          - **Windows**：Windows 10 / 11。若系统缺少 WebView2 Runtime，
+            程序启动时会弹窗提示，点「确定」即可打开微软官方下载页 ——
+            Win11 与较新的 Win10 已自带，通常用不到
+          - **Linux**：需要 WebKitGTK 4.1 运行时（deb 包会自动处理依赖）
+
+          ## 关于
+
+          ModelScout —— 探测任意 OpenAI 兼容端点上全部模型的能力与参数上限，
+          一键生成 OpenCode / DeepSeekHardness 配置。
+
+          ## 许可证
+
+          **PolyForm Noncommercial 1.0.0** —— 允许在**任何非商业目的**下
+          使用、修改、分发；**禁止商业使用**。
+          完整条款见随附的 `LICENSE`。
+          `Required Notice: Copyright (c) 2026 Huaxidesu`
+          BODY
+
+          echo "===== 发布说明 ====="
+          cat notes.md
+
+      - name: 创建或更新 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          DRAFT: ${{ inputs.draft }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          # 注意：不能用 `[ ... ] && flags+=(...)` 这种写法 ——
+          # 条件为假时整条语句返回非零，会被 set -e 当成失败直接退出。
+          flags=()
+          if [ "$DRAFT" = "true" ]; then flags+=(--draft); fi
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在 —— 覆盖上传产物"
+            gh release upload "$TAG" artifacts/* --clobber
+          else
+            echo "创建 Release $TAG"
+            gh release create "$TAG" \
+              --title "ModelScout $TAG" \
+              --notes-file notes.md \
+              --target "$GITHUB_SHA" \
+              "${flags[@]}" \
+              artifacts/*
+          fi
+
+      - name: 输出发布地址
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          echo "### 发布完成：$TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "$(gh release view "$TAG" --json url -q .url)" >> "$GITHUB_STEP_SUMMARY"

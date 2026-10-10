@@ -1,0 +1,245 @@
+/**
+ * ============================================================================
+ * ModelScout —— 全局样式（暗色极客风）
+ * ============================================================================
+ *
+ * 【Tailwind v4 要点】
+ * v4 用 `@import "tailwindcss";` 替代了旧的 `@tailwind base/components/utilities`
+ * 三行指令。主题定制改用 `@theme` 块声明 CSS 变量，
+ * 不再需要 tailwind.config.js。
+ *
+ * 【主题策略】
+ * 应用整体锁定暗色（tauri.conf.json 中 window.theme = "Dark"），
+ * 因此这里定义了一套深色基底 + 青绿强调色的 CSS 变量，
+ * 并由 App.vue 把这些变量映射给 Naive UI 的 themeOverrides，
+ * 保证 Naive UI 组件与自定义元素视觉一致。
+ * ============================================================================
+ */
+
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+ * 设计令牌
+ * ------------------------------------------------------------------------- */
+
+@theme {
+  /* 背景层级：从最深到最浅，用于构建层次感 */
+  --color-ms-bg: #0a0e14;
+  --color-ms-panel: #111721;
+  --color-ms-panel-2: #161d29;
+  --color-ms-elevated: #1c2433;
+  --color-ms-border: #232c3d;
+  --color-ms-border-strong: #2e3a4f;
+
+  /* 文字层级 */
+  --color-ms-text: #d6deeb;
+  --color-ms-text-dim: #8b98ad;
+  --color-ms-text-faint: #5c6b82;
+
+  /* 品牌与语义色 */
+  --color-ms-accent: #14b8a6;
+  --color-ms-accent-dim: #0d9488;
+  --color-ms-accent-glow: rgba(20, 184, 166, 0.15);
+  --color-ms-success: #22c55e;
+  --color-ms-warning: #f59e0b;
+  --color-ms-danger: #ef4444;
+  --color-ms-info: #3b82f6;
+  --color-ms-purple: #a78bfa;
+
+  /* 等宽字体栈：配置预览区使用 */
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas,
+    'Courier New', monospace;
+}
+
+/* ---------------------------------------------------------------------------
+ * 基础重置
+ * ------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: dark;
+  font-family:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', 'Hiragino Sans GB', sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background-color: var(--color-ms-bg);
+  color: var(--color-ms-text);
+  overflow: hidden; /* 由内部滚动容器负责滚动，避免整页抖动 */
+}
+
+#app {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------------------
+ * 滚动条（暗色极客风）
+ * ------------------------------------------------------------------------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ms-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-ms-border-strong);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #3d4b63;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------------------
+ * 选中文字
+ * ------------------------------------------------------------------------- */
+
+::selection {
+  background-color: var(--color-ms-accent-glow);
+  color: #ffffff;
+}
+
+/* ---------------------------------------------------------------------------
+ * 复用型工具类
+ * ------------------------------------------------------------------------- */
+
+/* 面板：应用中最常见的容器样式 */
+.ms-panel {
+  background-color: var(--color-ms-panel);
+  border: 1px solid var(--color-ms-border);
+  border-radius: 0.625rem;
+}
+
+/* 面板标题栏 */
+.ms-panel-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-ms-text-dim);
+}
+
+/* 等宽文本块（配置预览） */
+.ms-code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.65;
+  tab-size: 2;
+}
+
+/* 扫描线动效背景：让「探测中」有科技感 */
+.ms-scanlines {
+  position: relative;
+  overflow: hidden;
+}
+
+.ms-scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 0, 0, 0.16) 3px,
+    transparent 4px
+  );
+  opacity: 0.35;
+}
+
+/* 呼吸灯：用于「运行中」状态点 */
+@keyframes ms-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+.ms-pulse {
+  animation: ms-pulse 1.6s ease-in-out infinite;
+}
+
+/* 进度条光泽扫过效果 */
+@keyframes ms-sheen {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.ms-sheen {
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.14),
+    transparent
+  );
+  background-size: 200% 100%;
+  animation: ms-sheen 2.2s linear infinite;
+}
+
+/* 淡入：新日志行 / 新结果行进入时的过渡 */
+@keyframes ms-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ms-fade-in {
+  animation: ms-fade-in 0.18s ease-out;
+}
+
+/* ---------------------------------------------------------------------------
+ * Naive UI 局部覆盖
+ * ---------------------------------------------------------------------------
+ * 我们通过 n-config-provider 的 themeOverrides 完成大部分主题注入，
+ * 这里只处理 themeOverrides 覆盖不到的细节。
+ */
+
+/* 让表格在暗色下更紧凑 */
+.n-data-table .n-data-table-th {
+  font-weight: 600 !important;
+  letter-spacing: 0.02em;
+}
+
+/* 代码区域禁用文本选择外的交互干扰 */
+.ms-code-block {
+  user-select: text;
+  -webkit-user-select: text;
+}

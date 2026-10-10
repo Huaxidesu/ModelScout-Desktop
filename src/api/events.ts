@@ -1,0 +1,131 @@
+/**
+ * ============================================================================
+ * ModelScout —— 事件订阅层（前端唯一事件出口）
+ * ============================================================================
+ *
+ * 【为什么单独建这一层】
+ * 阶段 5 QA 要求「逐一核对事件名两侧一致」。把所有 listen 集中在一处，
+ * 事件名字符串只来自 `EVENT_NAMES` 常量，就能保证：
+ *   - 组件里永远不会出现硬编码的 'probe://xxx' 字面量
+ *   - 核对时只需比对 contracts.ts 的 EVENT_NAMES 与 events.rs 的常量
+ *
+ * 【Tauri v2 要点】
+ * `listen` 从 `@tauri-apps/api/event` 导入（v1 是从 `@tauri-apps/api/event`
+ * 导入但 API 签名不同）。每个 listen 返回 Promise<UnlistenFn>，
+ * 组件卸载时必须调用它，否则会造成监听器泄漏。
+ * ============================================================================
+ */
+
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { EVENT_NAMES } from '@/types/contracts'
+import type {
+  ProbeProgress,
+  ProbeLog,
+  ProbeModelDone,
+  ProbeFinished,
+  ProbeFatal,
+} from '@/types/contracts'
+
+/** 所有订阅函数统一返回这个类型，便于集中管理取消逻辑 */
+export type Unlisten = UnlistenFn
+
+/**
+ * 订阅「进度更新」事件。
+ *
+ * @param handler 收到进度 payload 时调用
+ * @returns 取消订阅函数（Promise 解析后得到）
+ */
+export function onProbeProgress(
+  handler: (payload: ProbeProgress) => void,
+): Promise<Unlisten> {
+  return listen<ProbeProgress>(EVENT_NAMES.PROGRESS, (event) => {
+    handler(event.payload)
+  })
+}
+
+/**
+ * 订阅「日志」事件。
+ */
+export function onProbeLog(handler: (payload: ProbeLog) => void): Promise<Unlisten> {
+  return listen<ProbeLog>(EVENT_NAMES.LOG, (event) => {
+    handler(event.payload)
+  })
+}
+
+/**
+ * 订阅「单模型完成」事件。
+ */
+export function onProbeModelDone(
+  handler: (payload: ProbeModelDone) => void,
+): Promise<Unlisten> {
+  return listen<ProbeModelDone>(EVENT_NAMES.MODEL_DONE, (event) => {
+    handler(event.payload)
+  })
+}
+
+/**
+ * 订阅「整轮结束」事件。
+ */
+export function onProbeFinished(
+  handler: (payload: ProbeFinished) => void,
+): Promise<Unlisten> {
+  return listen<ProbeFinished>(EVENT_NAMES.FINISHED, (event) => {
+    handler(event.payload)
+  })
+}
+
+/**
+ * 订阅「致命错误」事件。
+ */
+export function onProbeError(handler: (payload: ProbeFatal) => void): Promise<Unlisten> {
+  return listen<ProbeFatal>(EVENT_NAMES.ERROR, (event) => {
+    handler(event.payload)
+  })
+}
+
+/**
+ * 一次性订阅全部 5 个事件，返回统一的取消函数。
+ *
+ * 这是组件层推荐的用法：一行注册、一行清理，
+ * 不会因为漏掉某个事件而造成内存泄漏。
+ *
+ * @param handlers 各事件的处理函数（可以只提供关心的那几个）
+ * @returns 取消全部订阅的异步函数
+ */
+export async function subscribeAll(handlers: {
+  onProgress?: (payload: ProbeProgress) => void
+  onLog?: (payload: ProbeLog) => void
+  onModelDone?: (payload: ProbeModelDone) => void
+  onFinished?: (payload: ProbeFinished) => void
+  onError?: (payload: ProbeFatal) => void
+}): Promise<() => Promise<void>> {
+  const unlisteners: Unlisten[] = []
+
+  if (handlers.onProgress) {
+    unlisteners.push(await onProbeProgress(handlers.onProgress))
+  }
+  if (handlers.onLog) {
+    unlisteners.push(await onProbeLog(handlers.onLog))
+  }
+  if (handlers.onModelDone) {
+    unlisteners.push(await onProbeModelDone(handlers.onModelDone))
+  }
+  if (handlers.onFinished) {
+    unlisteners.push(await onProbeFinished(handlers.onFinished))
+  }
+  if (handlers.onError) {
+    unlisteners.push(await onProbeError(handlers.onError))
+  }
+
+  // 返回一个幂等的取消函数
+  return async () => {
+    for (const unlisten of unlisteners) {
+      try {
+        unlisten()
+      } catch {
+        // 取消订阅失败不应影响卸载流程，静默忽略
+      }
+    }
+    unlisteners.length = 0
+  }
+}

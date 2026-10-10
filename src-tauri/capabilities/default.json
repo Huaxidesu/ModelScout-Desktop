@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "ModelScout 主窗口的默认权限集合。放行范围：core:default（事件系统 listen/emit、app 基础信息）、core:event 系列（进度推送必需）、core:window 系列（拖拽/最小化/最大化/关闭/标题）、core:webview 系列（DevTools 调试）、clipboard-manager:allow-write-text / allow-read-text（一键复制配置）、opener:allow-open-url（打开官方文档与仓库链接）。注意：本项目自定义的 7 个 #[tauri::command] 无需在此授权——自定义命令经 generate_handler! 注册即自动可调用，这里授权的是 core 内置命令与插件命令。",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:app:allow-version",
+    "core:app:allow-name",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit",
+    "core:event:allow-emit-to",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-set-title",
+    "core:window:allow-is-maximized",
+    "core:webview:allow-internal-toggle-devtools",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-text",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+    }
+  ]
+}

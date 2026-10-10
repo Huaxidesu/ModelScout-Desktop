@@ -1,0 +1,126 @@
+# ============================================================================
+# ModelScout —— 版本控制忽略清单
+# ============================================================================
+#
+# 判断标准只有一条：
+#   **换一台机器 clone 下来、装好依赖就能跑起来** —— 这类文件才入库。
+#   凡是「能由构建产生」或「只对本地开发 / AI 协作有意义」的，一律忽略。
+#
+# 分三类：
+#   一、AI 协作产物       —— 换工具就换一套，属于本地上下文
+#   二、开发文档           —— 过程记录，不是可分发的源码
+#   三、构建产物与本地状态 —— 全部可再生
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# 一、AI 协作产物
+# ---------------------------------------------------------------------------
+# 各家 AI 编码工具会在项目根写自己的规则文件 / 记忆目录。它们描述的是
+# 「这台机器上这个工具该怎么干活」，不是项目的一部分 ——
+# 提交上去只会让仓库变吵，还会把不同工具的口味混在一起。
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.cursor/
+.cursorrules
+.windsurf/
+.claude/
+.codebuddy/
+.workbuddy-ai/
+.aider*
+.continue/
+.roomodes
+.github/copilot-instructions.md
+
+# ---------------------------------------------------------------------------
+# 二、开发文档
+# ---------------------------------------------------------------------------
+# docs/ 存放的是**开发过程文档**：决策日志、交付报告、使用手册、接口契约。
+# 它们面向本地开发者与 AI 协作者，不属于可分发的源码，因此不入库。
+#
+# ⚠️ 这些文件仍完整保留在本地磁盘上，只是不再被 git 跟踪。
+#    若某天确实需要把某一份放进仓库：
+#        git add -f docs/DECISIONS.md
+#    若要恢复整个目录的跟踪：
+#        git add -f docs/
+docs/
+
+# ---------------------------------------------------------------------------
+# 三、构建产物与本地状态
+# ---------------------------------------------------------------------------
+
+# ---- Node / 前端 ----
+node_modules/
+dist/
+dist-ssr/
+# 发布工作流组装「免安装版压缩包」时的暂存目录（见 .github/workflows/release.yml）
+dist-portable/
+.vite/
+.turbo/
+.parcel-cache/
+*.tsbuildinfo
+*.local
+
+# ---- Rust / Tauri ----
+# 注意：必须同时忽略 target/ 与 target_test/。
+# 后者是验证「os error 5 文件锁」时使用的独立 CARGO_TARGET_DIR
+# （见决策日志 D-E5），同样属于构建产物，绝不能提交。
+src-tauri/target/
+src-tauri/target_test/
+src-tauri/target-*/
+target/
+target_test/
+gen/schemas/
+src-tauri/gen/schemas/
+**/*.rs.bk
+
+# ---- Python（scripts/ 下的辅助脚本）----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# ---- 密钥与环境变量 ----
+# 任何情况下都不要提交真实密钥。本项目的 API Key 只存在于内存中，
+# 这里拦的是开发时可能顺手创建的本地环境文件。
+.env
+.env.local
+.env.*.local
+
+# ---- 测试与覆盖率 ----
+coverage/
+*.lcov
+.nyc_output/
+
+# ---- 日志 ----
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ---- 编辑器与操作系统 ----
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ---- 杂项临时文件 ----
+*.tmp
+*.bak
+*.orig
+*.rej
+.eslintcache
+.stylelintcache

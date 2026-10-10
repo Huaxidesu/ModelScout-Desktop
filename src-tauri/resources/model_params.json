@@ -1,0 +1,513 @@
+{
+  "$schema": "internal",
+  "dictionaryVersion": "2026.10.09",
+  "entries": [
+    {
+      "matchPatterns": [
+        "gpt-4o-mini*"
+      ],
+      "contextLimit": 128000,
+      "maxOutputLimit": 16384,
+      "note": "OpenAI GPT-4o mini"
+    },
+    {
+      "matchPatterns": [
+        "gpt-4o*"
+      ],
+      "contextLimit": 128000,
+      "maxOutputLimit": 16384,
+      "note": "OpenAI GPT-4o（含 2024-05-13 / 2024-08-06 等快照）"
+    },
+    {
+      "matchPatterns": [
+        "chatgpt-4o-latest"
+      ],
+      "contextLimit": 128000,
+      "maxOutputLimit": 16384,
+      "note": "OpenAI ChatGPT-4o 滚动最新版"
+    },
+    {
+      "matchPatterns": [
+        "gpt-4-turbo*",
+        "gpt-4-0125*",
+        "gpt-4-1106*"
+      ],
+      "contextLimit": 128000,
+      "maxOutputLimit": 4096,
+      "note": "OpenAI GPT-4 Turbo 系列"
+    },
+    {
+      "matchPatterns": [
+        "gpt-4-0613",
+        "gpt-4",
+        "gpt-4-32k*"
+      ],
+      "contextLimit": 8192,
+      "maxOutputLimit": 4096,
+      "note": "OpenAI 初代 GPT-4（gpt-4-32k 上下文为 32768，见下条）"
+    },
+    {
+      "matchPatterns": [
+        "gpt-4-32k*",
+        "gpt-4-32k-0613"
+      ],
+      "contextLimit": 32768,
+      "maxOutputLimit": 4096,
+      "note": "OpenAI GPT-4 32K"
+    },
+    {
+      "matchPatterns": [
+        "gpt-3.5-turbo-16k*"
+      ],
+      "contextLimit": 16385,
+      "maxOutputLimit": 4096,
+      "note": "OpenAI GPT-3.5 Turbo 16K"
+    },
+    {
+      "matchPatterns": [
+        "gpt-3.5-turbo*",
+        "gpt-3.5*"
+      ],
+      "contextLimit": 16385,
+      "maxOutputLimit": 4096,
+      "note": "OpenAI GPT-3.5 Turbo（默认 16385 上下文）"
+    },
+    {
+      "matchPatterns": [
+        "gpt-5*",
+        "gpt-5-mini*",
+        "gpt-5-nano*"
+      ],
+      "contextLimit": 400000,
+      "maxOutputLimit": 128000,
+      "note": "OpenAI GPT-5 系列（数值以官方文档为准，可能随版本变化）"
+    },
+    {
+      "matchPatterns": [
+        "o1-mini*"
+      ],
+      "contextLimit": 128000,
+      "maxOutputLimit": 65536,
+      "note": "OpenAI o1-mini 推理模型"
+    },
+    {
+      "matchPatterns": [
+        "o1-preview*"
+      ],
+      "contextLimit": 128000,
+      "maxOutputLimit": 32768,
+      "note": "OpenAI o1-preview 推理模型"
+    },
+    {
+      "matchPatterns": [
+        "o1*",
+        "o3*",
+        "o4-mini*"
+      ],
+      "contextLimit": 200000,
+      "maxOutputLimit": 100000,
+      "note": "OpenAI o 系列推理模型"
+    },
+    {
+      "matchPatterns": [
+        "claude-3-5-sonnet*",
+        "claude-3.5-sonnet*"
+      ],
+      "contextLimit": 200000,
+      "maxOutputLimit": 8192,
+      "note": "Anthropic Claude 3.5 Sonnet"
+    },
+    {
+      "matchPatterns": [
+        "claude-3-5-haiku*",
+        "claude-3.5-haiku*"
+      ],
+      "contextLimit": 200000,
+      "maxOutputLimit": 8192,
+      "note": "Anthropic Claude 3.5 Haiku"
+    },
+    {
+      "matchPatterns": [
+        "claude-3-7-sonnet*",
+        "claude-3.7-sonnet*"
+      ],
+      "contextLimit": 200000,
+      "maxOutputLimit": 64000,
+      "note": "Anthropic Claude 3.7 Sonnet"
+    },
+    {
+      "matchPatterns": [
+        "claude-sonnet-4*",
+        "claude-4-sonnet*"
+      ],
+      "contextLimit": 200000,
+      "maxOutputLimit": 64000,
+      "note": "Anthropic Claude Sonnet 4"
+    },
+    {
+      "matchPatterns": [
+        "claude-opus-4*",
+        "claude-4-opus*"
+      ],
+      "contextLimit": 200000,
+      "maxOutputLimit": 32000,
+      "note": "Anthropic Claude Opus 4"
+    },
+    {
+      "matchPatterns": [
+        "claude-3-opus*"
+      ],
+      "contextLimit": 200000,
+      "maxOutputLimit": 4096,
+      "note": "Anthropic Claude 3 Opus"
+    },
+    {
+      "matchPatterns": [
+        "claude-3-sonnet*"
+      ],
+      "contextLimit": 200000,
+      "maxOutputLimit": 4096,
+      "note": "Anthropic Claude 3 Sonnet"
+    },
+    {
+      "matchPatterns": [
+        "claude-3-haiku*"
+      ],
+      "contextLimit": 200000,
+      "maxOutputLimit": 4096,
+      "note": "Anthropic Claude 3 Haiku"
+    },
+    {
+      "matchPatterns": [
+        "claude-2*"
+      ],
+      "contextLimit": 100000,
+      "maxOutputLimit": 4096,
+      "note": "Anthropic Claude 2"
+    },
+    {
+      "matchPatterns": [
+        "deepseek-reasoner*",
+        "deepseek-r1*"
+      ],
+      "contextLimit": 65536,
+      "maxOutputLimit": 8192,
+      "note": "DeepSeek 推理模型（R1 系列）"
+    },
+    {
+      "matchPatterns": [
+        "deepseek-chat*",
+        "deepseek-v3*"
+      ],
+      "contextLimit": 65536,
+      "maxOutputLimit": 8192,
+      "note": "DeepSeek 通用对话模型（V3 系列）"
+    },
+    {
+      "matchPatterns": [
+        "deepseek-coder*"
+      ],
+      "contextLimit": 65536,
+      "maxOutputLimit": 8192,
+      "note": "DeepSeek Coder"
+    },
+    {
+      "matchPatterns": [
+        "gemini-2.5-pro*"
+      ],
+      "contextLimit": 1048576,
+      "maxOutputLimit": 65536,
+      "note": "Google Gemini 2.5 Pro"
+    },
+    {
+      "matchPatterns": [
+        "gemini-2.5-flash*"
+      ],
+      "contextLimit": 1048576,
+      "maxOutputLimit": 65536,
+      "note": "Google Gemini 2.5 Flash"
+    },
+    {
+      "matchPatterns": [
+        "gemini-2.0-flash*"
+      ],
+      "contextLimit": 1048576,
+      "maxOutputLimit": 8192,
+      "note": "Google Gemini 2.0 Flash"
+    },
+    {
+      "matchPatterns": [
+        "gemini-1.5-pro*"
+      ],
+      "contextLimit": 2097152,
+      "maxOutputLimit": 8192,
+      "note": "Google Gemini 1.5 Pro"
+    },
+    {
+      "matchPatterns": [
+        "gemini-1.5-flash*"
+      ],
+      "contextLimit": 1048576,
+      "maxOutputLimit": 8192,
+      "note": "Google Gemini 1.5 Flash"
+    },
+    {
+      "matchPatterns": [
+        "qwen3*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 32768,
+      "note": "阿里通义千问 Qwen3 系列"
+    },
+    {
+      "matchPatterns": [
+        "qwen2.5-coder*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 8192,
+      "note": "阿里通义千问 Qwen2.5 Coder"
+    },
+    {
+      "matchPatterns": [
+        "qwen2.5*",
+        "qwen-max*",
+        "qwen-plus*",
+        "qwen-turbo*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 8192,
+      "note": "阿里通义千问 Qwen2.5 / 商业版系列"
+    },
+    {
+      "matchPatterns": [
+        "qwen2*",
+        "qwen1.5*"
+      ],
+      "contextLimit": 32768,
+      "maxOutputLimit": 8192,
+      "note": "阿里通义千问早期系列"
+    },
+    {
+      "matchPatterns": [
+        "glm-4.6*",
+        "glm-4.5*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 16384,
+      "note": "智谱 GLM-4.5 / 4.6"
+    },
+    {
+      "matchPatterns": [
+        "glm-4*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 4096,
+      "note": "智谱 GLM-4 系列"
+    },
+    {
+      "matchPatterns": [
+        "moonshot-v1-128k*",
+        "kimi-k2*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 16384,
+      "note": "月之暗面 Kimi K2 / Moonshot 128K"
+    },
+    {
+      "matchPatterns": [
+        "moonshot-v1-32k*"
+      ],
+      "contextLimit": 32768,
+      "maxOutputLimit": 8192,
+      "note": "月之暗面 Moonshot 32K"
+    },
+    {
+      "matchPatterns": [
+        "moonshot-v1-8k*"
+      ],
+      "contextLimit": 8192,
+      "maxOutputLimit": 4096,
+      "note": "月之暗面 Moonshot 8K"
+    },
+    {
+      "matchPatterns": [
+        "llama-3.3-70b*",
+        "llama3.3*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 8192,
+      "note": "Meta Llama 3.3 70B"
+    },
+    {
+      "matchPatterns": [
+        "llama-3.1*",
+        "llama3.1*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 8192,
+      "note": "Meta Llama 3.1 系列"
+    },
+    {
+      "matchPatterns": [
+        "llama-3*",
+        "llama3*"
+      ],
+      "contextLimit": 8192,
+      "maxOutputLimit": 4096,
+      "note": "Meta Llama 3 系列"
+    },
+    {
+      "matchPatterns": [
+        "mistral-large*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 8192,
+      "note": "Mistral Large"
+    },
+    {
+      "matchPatterns": [
+        "mistral-small*",
+        "mistral-nemo*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 8192,
+      "note": "Mistral Small / Nemo"
+    },
+    {
+      "matchPatterns": [
+        "mixtral-8x7b*",
+        "mixtral-8x22b*"
+      ],
+      "contextLimit": 65536,
+      "maxOutputLimit": 8192,
+      "note": "Mistral Mixtral MoE 系列"
+    },
+    {
+      "matchPatterns": [
+        "grok-4*"
+      ],
+      "contextLimit": 256000,
+      "maxOutputLimit": 32768,
+      "note": "xAI Grok 4"
+    },
+    {
+      "matchPatterns": [
+        "grok-3*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 16384,
+      "note": "xAI Grok 3"
+    },
+    {
+      "matchPatterns": [
+        "grok-2*",
+        "grok-beta*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 8192,
+      "note": "xAI Grok 2"
+    },
+    {
+      "matchPatterns": [
+        "doubao-1.5*",
+        "doubao-pro*",
+        "doubao-lite*"
+      ],
+      "contextLimit": 262144,
+      "maxOutputLimit": 12288,
+      "note": "字节豆包 Doubao 系列"
+    },
+    {
+      "matchPatterns": [
+        "ernie-4.5*",
+        "ernie-4*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 8192,
+      "note": "百度文心一言 ERNIE 4 系列"
+    },
+    {
+      "matchPatterns": [
+        "step-3*",
+        "step-2*"
+      ],
+      "contextLimit": 65536,
+      "maxOutputLimit": 8192,
+      "note": "阶跃星辰 Step 系列"
+    },
+    {
+      "matchPatterns": [
+        "minimax-text-01*",
+        "abab6.5*",
+        "abab7*"
+      ],
+      "contextLimit": 1000000,
+      "maxOutputLimit": 8192,
+      "note": "MiniMax abab / text-01（部分型号号称百万上下文）"
+    },
+    {
+      "matchPatterns": [
+        "hunyuan-turbos*",
+        "hunyuan-large*",
+        "hunyuan-standard*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 8192,
+      "note": "腾讯混元 Hunyuan 系列"
+    },
+    {
+      "matchPatterns": [
+        "spark-max*",
+        "spark-pro*",
+        "spark-lite*",
+        "generalv3*"
+      ],
+      "contextLimit": 32768,
+      "maxOutputLimit": 8192,
+      "note": "科大讯飞星火 Spark 系列"
+    },
+    {
+      "matchPatterns": [
+        "command-r-plus*",
+        "command-r*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 4096,
+      "note": "Cohere Command R 系列"
+    },
+    {
+      "matchPatterns": [
+        "phi-4*"
+      ],
+      "contextLimit": 16384,
+      "maxOutputLimit": 4096,
+      "note": "Microsoft Phi-4"
+    },
+    {
+      "matchPatterns": [
+        "phi-3*"
+      ],
+      "contextLimit": 131072,
+      "maxOutputLimit": 4096,
+      "note": "Microsoft Phi-3"
+    },
+    {
+      "matchPatterns": [
+        "yi-large*",
+        "yi-medium*",
+        "yi-lightning*"
+      ],
+      "contextLimit": 32768,
+      "maxOutputLimit": 4096,
+      "note": "零一万物 Yi 系列"
+    },
+    {
+      "matchPatterns": [
+        "baichuan*"
+      ],
+      "contextLimit": 32768,
+      "maxOutputLimit": 4096,
+      "note": "百川智能 Baichuan 系列"
+    }
+  ]
+}

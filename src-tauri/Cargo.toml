@@ -1,0 +1,98 @@
+[package]
+name = "modelscout"
+version = "0.1.0"
+description = "ModelScout —— 大模型 API 探测与配置生成桌面应用"
+authors = ["Huaxidesu"]
+# PolyForm Noncommercial 1.0.0：允许非商业用途下的使用、修改与分发。
+# 完整法律文本见仓库根目录 LICENSE。
+# 注意：这不是 OSI 认证的开源协议 —— 带「非商业」限制的协议属于源码可见
+# （source-available）。详见 README「许可」章节。
+license = "PolyForm-Noncommercial-1.0.0"
+edition = "2021"
+# rustc 1.80 已实测满足 Tauri 2.x 的最低要求（1.77.2）
+rust-version = "1.77.2"
+
+# Tauri v2 的标准双目标布局：
+#   - lib  : 全部业务逻辑放在这里，便于单测与被 main.rs 复用
+#   - bin  : 仅作为可执行入口，调用 lib 的 run()
+[lib]
+name = "modelscout_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.1", features = [] }
+
+[dependencies]
+# ---- Tauri 核心 ----
+tauri = { version = "2.12.2", features = [] }
+# ---- Tauri 官方插件 ----
+# 剪贴板：任务书第七节第 5 条要求 —— 不确定 navigator.clipboard 是否可用时
+# 改用官方插件。这里同时接入插件的 JS API，并保留浏览器 API 作为降级路径。
+tauri-plugin-clipboard-manager = "2.4.1"
+# 打开外部链接（GitHub 仓库、官方文档链接）
+tauri-plugin-opener = "2.7.0"
+
+# ---- HTTP 客户端 ----
+# 全部网络请求走 Rust 端，前端不直接 fetch，避免跨域与 Key 暴露（任务书第四节）
+# json feature 为必需项（任务书第七节第 6 条）
+reqwest = { version = "0.13.5", default-features = true, features = ["json"] }
+
+# ---- 序列化 ----
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0"
+
+# ---- 异步运行时与并发 ----
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
+# futures 提供 buffer_unordered，与 tokio::sync::Semaphore 共同实现并发控制
+futures = "0.3.34"
+
+# ---- 正则（推理模型名匹配） ----
+regex = "1.13.1"
+
+# ---- 惰性静态初始化（内置参数字典） ----
+once_cell = "1.21.4"
+
+# ---- 错误类型 ----
+thiserror = "2.0"
+
+# ---- Windows 平台专属 ----
+# 启动前检查 WebView2 运行时（见 src/webview2.rs）。
+#
+# 为什么用裸 Win32 而不是引一个 GUI 库：那个提示必须在 **WebView 创建之前**
+# 弹出来 —— 此刻进程里还没有任何窗口系统可用，Tauri 的对话框、rfd 都指望不上。
+# 只有 MessageBoxW 能在这个时机工作。
+#
+# windows-sys 本来就在依赖树里（Tauri 的传递依赖），加为直接依赖不新增下载，
+# 只是多开几个 feature。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+] }
+
+[features]
+# Tauri v2 官方模板默认特性：
+#   custom-protocol 用于生产构建，dev 模式下关闭以使用本地 devServer
+custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+# 集成测试专用依赖（见 D-37）。
+#
+# 测试用「记录型事件端口」（`probe::EventSink`）替代 `tauri::test::mock_app()`，
+# 因此**不需要** `tauri` 的 `test` feature —— 那个 feature 会把完整 GUI 运行时
+# （comctl32 / user32 / dwmapi…）链进测试二进制，而 `tauri-build` 只把 Windows
+# 清单注入 bin 目标，test 目标拿不到，于是启动即
+# `STATUS_ENTRYPOINT_NOT_FOUND (0xC0000139)`。
+# 走事件端口后测试二进制与库单测二进制一样干净，实测可以正常运行。
+#
+# 只需要 tokio 来起 mock HTTP 服务。
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+
+[profile.release]
+# 体积优化，Tauri 官方推荐配置
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
