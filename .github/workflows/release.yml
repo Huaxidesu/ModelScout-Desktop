@@ -35,6 +35,21 @@
 #   tauri.conf.json 的 targets 写了三个，但 Tauri 会**按当前平台静默过滤**：
 #   Windows 上只出 NSIS，Linux 上只出 deb + AppImage。
 #   本地已验证（Windows 构建输出 `Finished 1 bundle`），无需平台专属配置文件。
+#
+# 【产物为什么要先「整理」再发布】
+#   `actions/download-artifact` 会**保留每个 artifact 内部的目录结构**，
+#   下载完是一棵目录树，不是平铺的文件。直接把 `artifacts/*` 当附件列表，
+#   会把 `src-tauri/` 这种目录也交给 gh，于是报：
+#     read artifacts/src-tauri: is a directory
+#   所以 release job 里多了一步「整理发行文件」：递归挑出四类发行文件、
+#   摊平到 release-files/，并校验齐全 + 查重名。
+#   后续的发布说明与上传都只认 release-files/。
+#
+# 【Actions 版本要求 Node 24】
+#   actions/checkout、setup-node、upload-artifact、download-artifact
+#   都升到了原生使用 node24 的版本（旧版在 runner 上会被强制降级运行并告警）。
+#   ⚠️ 注意这只影响 Actions 自身，项目构建用的仍是 Node 22（见 setup-node 的
+#      node-version），两者无关。
 # ============================================================================
 
 name: Release
@@ -81,7 +96,7 @@ jobs:
       tag: ${{ steps.ver.outputs.tag }}
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 解析版本号与标签
         id: ver
@@ -104,7 +119,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: 安装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -125,10 +140,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 安装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -192,7 +207,7 @@ jobs:
           Get-ChildItem $outDir | Format-Table Name, Length
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows
           path: |
@@ -210,7 +225,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 安装系统依赖
         # Tauri v2 在 Linux 上的构建依赖，缺一个都会在链接阶段失败
@@ -228,7 +243,7 @@ jobs:
             librsvg2-dev
 
       - name: 安装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -249,7 +264,7 @@ jobs:
         run: npx tauri build --ci -- --locked
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux
           path: |
@@ -274,17 +289,80 @@ jobs:
         #
         # 另外 checkout 默认会把 GITHUB_TOKEN 写进 git 配置（persist-credentials），
         # gh 创建 tag 时也用得上。
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: 收集全部产物
-        uses: actions/download-artifact@v4
+      - name: 下载全部产物
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
-          # 把各 job 的产物摊平到同一层，方便后面直接 glob
           merge-multiple: true
 
-      - name: 列出待发布文件
-        run: ls -lh artifacts
+      - name: 整理发行文件
+        # ⚠️ 这一步不能省。
+        #
+        # download-artifact 会**保留每个 artifact 内部的目录结构**，
+        # 所以下载完得到的是一棵目录树，而不是一堆平铺的文件：
+        #
+        #   artifacts/dist-portable/ModelScout-<版本>-windows-x64-portable.zip
+        #   artifacts/src-tauri/target/release/bundle/nsis/ModelScout_<版本>_x64-setup.exe
+        #   artifacts/src-tauri/target/release/bundle/deb/ModelScout_<版本>_amd64.deb
+        #   artifacts/src-tauri/target/release/bundle/appimage/ModelScout_<版本>_amd64.AppImage
+        #
+        # 之前直接拿 `artifacts/*` 当附件列表，等于把 `src-tauri/` 这样的
+        # **目录**也交给了 gh，于是报：
+        #   Post ".../assets?name=src-tauri": read artifacts/src-tauri: is a directory
+        #
+        # gh 的附件只接受**具体文件**，所以必须先递归挑出文件、摊平到一个目录，
+        # 后面所有步骤（发布说明、上传）都只认 release-files/。
+        run: |
+          set -euo pipefail
+
+          echo "--- 下载到的产物结构 ---"
+          find artifacts \( -type f -o -type d \) | sort | head -60
+
+          mkdir -p release-files
+
+          # 用 mapfile 而不是 `find ... | while read`：
+          # 管道里的 while 跑在**子 shell** 里，里面 `exit 1` 只会结束子 shell，
+          # 主脚本会若无其事地继续往下跑。
+          mapfile -d '' found < <(
+            find artifacts -type f \( \
+              -name '*.exe' -o -name '*.zip' -o -name '*.deb' -o -name '*.AppImage' \
+            \) -print0 | sort -z
+          )
+
+          if [ "${#found[@]}" -eq 0 ]; then
+            echo "::error::在 artifacts/ 下没有找到任何发行文件"
+            exit 1
+          fi
+
+          for src in "${found[@]}"; do
+            name=$(basename "$src")
+            if [ -e "release-files/$name" ]; then
+              # 文件名撞车说明构建产物有问题，静默覆盖会让用户下到错的文件
+              echo "::error::发行文件名冲突：$name（来自 $src）"
+              exit 1
+            fi
+            cp "$src" "release-files/$name"
+          done
+
+          # 四种发行文件必须齐全。少任何一种都说明构建环节出了问题，
+          # 与其发一个残缺的 Release，不如在这里直接失败、留下明确的日志。
+          missing=0
+          for ext in exe zip deb AppImage; do
+            if ! compgen -G "release-files/*.$ext" >/dev/null; then
+              echo "::error::缺少 .$ext 发行文件"
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            echo "--- release-files/ 实际内容 ---"
+            ls -lh release-files/ || true
+            exit 1
+          fi
+
+          echo "--- 整理完成，待发布文件 ---"
+          ls -lh release-files/
 
       - name: 生成发布说明
         env:
@@ -292,23 +370,27 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 文件清单**从实际产物生成**，不硬编码文件名。
-          # 硬编码的表格在 Tauri 改了 deb / AppImage 命名规则之后会悄悄说谎，
-          # 而用户是照着这张表去点下载的 —— 宁可多几行脚本。
+          # 清单**从实际发行文件生成**，不硬编码文件名。
+          # 两个理由：
+          #   1. Tauri 改过命名规则（deb 包名是小写的），硬编码的表格会悄悄
+          #      指向不存在的文件，而用户正是照着这张表去点下载的；
+          #   2. 之前这里是 `artifacts/*`，那会把目录名也当成文件列进表格
+          #      （出现过 appimage / deb / dist-portable / src-tauri 这种行）。
+          #      现在统一读 release-files/，里面只有文件。
           {
             echo "## 下载"
             echo
             echo "| 文件 | 大小 | 说明 |"
             echo "|---|---|---|"
-            for f in artifacts/*; do
+            for f in release-files/*; do
               name=$(basename "$f")
               size=$(du -h "$f" | cut -f1)
               case "$name" in
-                *windows-x64-portable.zip) desc="**免安装版** —— 解压后双击 ModelScout.exe 即可运行" ;;
-                *.exe)                     desc="NSIS 安装包（当前用户安装，无需管理员）" ;;
-                *.AppImage)                desc="**免安装** —— chmod +x 后双击运行" ;;
-                *.deb)                     desc="Debian / Ubuntu 安装包" ;;
-                *)                         desc="—" ;;
+                *.zip)      desc="**免安装版** —— 解压后双击 ModelScout.exe 即可运行" ;;
+                *.exe)      desc="NSIS 安装包（当前用户安装，无需管理员）" ;;
+                *.AppImage) desc="**免安装** —— chmod +x 后双击运行" ;;
+                *.deb)      desc="Debian / Ubuntu 安装包" ;;
+                *)          desc="—" ;;
               esac
               echo "| \`$name\` | $size | $desc |"
             done
@@ -354,9 +436,28 @@ jobs:
           if [ "$DRAFT" = "true" ]; then flags+=(--draft); fi
           if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
 
+          # 只把**文件**交给 gh。传目录会被拒：
+          #   read artifacts/src-tauri: is a directory
+          # release-files/ 里只会有文件（上一步保证过），这里再兜一次空目录。
+          shopt -s nullglob
+          assets=(release-files/*)
+          shopt -u nullglob
+
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::release-files/ 为空，没有可发布的文件"
+            exit 1
+          fi
+
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在 —— 覆盖上传产物"
-            gh release upload "$TAG" artifacts/* --clobber
+            # ⚠️ 这条分支是**必须**的，不是锦上添花：
+            # 上一次运行可能已经把 Release 建出来了、只是附件没传完
+            # （比如这次要修的目录报错）。此时再 create 会直接报
+            # "release already exists"，让人误以为是新问题。
+            # 正确做法是更新说明 + 覆盖上传附件，让重跑能自愈。
+            echo "Release $TAG 已存在 —— 更新说明并覆盖附件"
+            gh release edit "$TAG" --notes-file notes.md "${flags[@]}"
+            # --clobber 覆盖同名附件；任何一个上传失败都会让本步骤失败
+            gh release upload "$TAG" "${assets[@]}" --clobber
           else
             echo "创建 Release $TAG"
             gh release create "$TAG" \
@@ -364,7 +465,7 @@ jobs:
               --notes-file notes.md \
               --target "$GITHUB_SHA" \
               "${flags[@]}" \
-              artifacts/*
+              "${assets[@]}"
           fi
 
       - name: 输出发布地址
