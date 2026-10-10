@@ -265,6 +265,17 @@ jobs:
     needs: [prepare, build-windows, build-linux]
     runs-on: ubuntu-22.04
     steps:
+      - name: 检出代码
+        # ⚠️ 这一步**必须**有，哪怕本 job 不编译任何东西。
+        #
+        # `gh release create --target <sha>` 会**先调 git 去解析那个 SHA**，
+        # 没有仓库就直接失败：
+        #   failed to run git: fatal: not a git repository
+        #
+        # 另外 checkout 默认会把 GITHUB_TOKEN 写进 git 配置（persist-credentials），
+        # gh 创建 tag 时也用得上。
+        uses: actions/checkout@v4
+
       - name: 收集全部产物
         uses: actions/download-artifact@v4
         with:
