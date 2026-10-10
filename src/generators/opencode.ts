@@ -19,13 +19,13 @@
  *   ModelEntry = {
  *     id?:          string
  *     name?:        string
- *     tool_call?:   boolean         // ⚠️ 顶层字段，不是 capabilities.toolcall
- *     attachment?:  boolean         // ⚠️ 顶层字段
- *     reasoning?:   boolean         // ⚠️ 顶层字段
+ *     tool_call?:   boolean         // 注意：顶层字段，不是 capabilities.toolcall
+ *     attachment?:  boolean         // 注意：顶层字段
+ *     reasoning?:   boolean         // 注意：顶层字段
  *     limit?:       { context: number, output: number }   // 二者都必填
  *   }
  *
- * ⚠️ **两个曾经踩过的坑（本文件已修正）**
+ * 注意：**两个曾遇到的问题（本文件已修正）**
  *
  * 1. 模型能力开关曾经被写成嵌套的 `capabilities: { toolcall, attachment,
  *    reasoning }`。但官方 schema 对模型条目设了 `additionalProperties: false`，
@@ -80,7 +80,7 @@ export interface OpenCodeProvider {
 /**
  * OpenCode 中的单个模型条目。
  *
- * ⚠️ 能力开关是**顶层字段**（`tool_call` / `attachment` / `reasoning`），
+ * 注意：能力开关是**顶层字段**（`tool_call` / `attachment` / `reasoning`），
  * 不是嵌套对象 —— 详见文件头注释。
  */
 export interface OpenCodeModelEntry {
@@ -201,7 +201,7 @@ export function inferProviderPackage(baseUrl: string): string {
  * 生成单个模型条目。
  *
  * 能力三态为 `unknown` 时**不写入**对应字段，让 OpenCode 用它自己的默认判定，
- * 而不是被我们错误的 `false` 误导。
+ * 而不是被本函数错误的 `false` 误导。
  */
 export function buildModelEntry(model: ModelInfo): OpenCodeModelEntry {
   const entry: OpenCodeModelEntry = {
@@ -238,9 +238,9 @@ export function buildModelEntry(model: ModelInfo): OpenCodeModelEntry {
   return entry
 }
 
-/** 未能探测到上下文上限时使用的保守兜底值（8K，几乎所有模型都支持） */
+/** 未能探测到上下文上限时使用的回退值（8K，几乎所有模型都支持） */
 const DEFAULT_CONTEXT = 8192
-/** 未能探测到输出上限时使用的保守兜底值（4K，几乎无风险） */
+/** 未能探测到输出上限时使用的回退值（4K，几乎无风险） */
 const DEFAULT_OUTPUT = 4096
 
 /* ---------------------------------------------------------------------------
@@ -314,7 +314,7 @@ function providerBodyLines(ctx: ResolvedContext, keyIndent: number): string[] {
   ctx.models.forEach((model, index) => {
     const entry = buildModelEntry(model)
     const isLast = index === ctx.models.length - 1
-    // ⚠️ 键名同样必须转义！模型 ID 来自上游 `/models` 响应，
+    // 注意：键名同样必须转义。模型 ID 来自上游 `/models` 响应，
     // 里面出现 `"` 或 `\` 时若不转义，整份配置就成了非法 JSON。
     lines.push(
       `${pad(k + 4)}"${escapeJsonString(model.id)}": ${stringifyEntry(entry, k + 4)}${isLast ? '' : ','}`,
@@ -330,9 +330,9 @@ function providerBodyLines(ctx: ResolvedContext, keyIndent: number): string[] {
 /**
  * 把配置渲染为带注释的 JSONC 文本（**完整配置**）。
  *
- * 【为什么手工拼字符串而不是 JSON.stringify】
+ * 【为什么手动拼字符串而不是 JSON.stringify】
  * 用户需要看懂生成的配置。纯 JSON.stringify 会得到一行 200 字符的
- * 压缩产物，或是一个缩进到无法阅读的巨块。手工拼接让我们可以：
+ * 压缩产物，或是一个缩进到无法阅读的巨块。手动拼接让我们可以：
  *   - 在文件头写清「这份文件是什么、密钥写在哪、要注意什么」
  *   - 按「provider → 模型」分组，加空行分隔
  *
@@ -382,7 +382,7 @@ export function renderOpenCodeJsonc(context: GenerateContext): string {
  * 实际使用中，用户几乎总是**已经有一份 opencode.json**（里面有 mcp /
  * permission / plugin 等），需要的是把 provider 加进去，而不是替换整份文件。
  * 而完整配置自带 `{` … `}` 与 `$schema`，直接粘进去必然多出一层括号 ——
- * 这正是用户实际踩到的坑：合并时多留了一个 `}`，opencode 直接解析失败。
+ * 这正是用户实际遇到的问题：合并时多留了一个 `}`，opencode 直接解析失败。
  *
  * 片段形态从根上消除这类错误：粘到哪一层就是哪一层。
  *
@@ -474,8 +474,8 @@ function stringifyEntry(value: unknown, indentSpaces: number): string {
 /**
  * 校验生成结果中不存在未替换的占位符。
  *
- * 任务书阶段 4 校验要求：「模板中的占位符全部被正确替换，无残留 {{}}」。
- * 本函数就是这条校验的可执行化。
+ * 任务书阶段 4 验收项：「模板中的占位符全部被正确替换，无残留 {{}}」。
+ * 本函数即将该验收项落实为可执行检查。
  */
 export function validateNoPlaceholders(output: string): string[] {
   const problems: string[] = []

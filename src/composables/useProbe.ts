@@ -41,7 +41,7 @@ import type { ModelBrief, PingResult } from '@/types/contracts'
  *
  * `createDiscreteApi(['message'])` 会在首次调用时创建一个脱离组件树的
  * 独立渲染上下文，正是官方为「在组件外调用 message」提供的方案。
- * 代价是它不受 NConfigProvider 的主题影响 —— 因此我们在构造时显式
+ * 代价是它不受 NConfigProvider 的主题影响 —— 因此此处在构造时显式
  * 传入与 App.vue 一致的暗色主题，保证视觉统一。
  */
 const { message } = createDiscreteApi(['message'], {
@@ -166,7 +166,7 @@ export function useProbe() {
   /**
    * 连通性预检。
    *
-   * 这是我们推荐的「第一步」：在花时间跑完整探测前，
+   * 此处推荐将其作为「第一步」：在花时间跑完整探测前，
    * 先确认 Key 与 Base URL 是否正确。
    */
   async function ping(): Promise<void> {
@@ -243,7 +243,7 @@ export function useProbe() {
 
     try {
       const summary = await startProbe(store.config)
-      // 兜底覆盖：即使事件全部丢失，结果也是完整的
+      // 回退覆盖：即使事件全部丢失，结果也是完整的
       store.applySummary(summary)
 
       if (summary.errors.length > 0) {

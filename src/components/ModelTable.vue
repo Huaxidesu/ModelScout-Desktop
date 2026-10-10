@@ -132,7 +132,7 @@ const columns = computed<DataTableColumns<ModelInfo>>(() => [
   /* ---- 勾选列 ---- */
   {
     type: 'selection',
-    // 手动实现选择逻辑，因为我们需要把选择状态同步到 store
+    // 手动实现选择逻辑，因为此处需要把选择状态同步到 store
     disabled: () => false,
   },
 

@@ -20,11 +20,11 @@
  * ------------------------------------------------------------------------- */
 
 /**
- * 需要吃掉两段的公共后缀（`example.co.uk` 的主体是 `example`）。
+ * 需要剥离两段的公共后缀（`example.co.uk` 的主体是 `example`）。
  *
  * 只列常见的双段后缀；未列出的按单段后缀处理。
  * 这不是一份完整的 Public Suffix List —— 对「推断一个默认名字」
- * 这个用途来说，覆盖常见情况即可，多吃的风险只是名字略短。
+ * 这个用途来说，覆盖常见情况即可，多剥离的风险只是名字略短。
  */
 const MULTI_PART_SUFFIXES = new Set([
   'com.cn',
@@ -102,7 +102,7 @@ export function sanitizeProviderKey(raw: string): string {
  * 规则（按优先级）：
  *   1. 局域网 / 本机地址（IP、localhost）→ `local`
  *      —— 这类端点没有可辨识的「厂商名」，用 `local` 最诚实
- *   2. 否则取域名主体：先吃掉公共后缀，再跳过 `api` / `www` 之类的通用前缀，
+ *   2. 否则取域名主体：先剥离公共后缀，再跳过 `api` / `www` 之类的通用前缀，
  *      取剩下的最后一段
  *
  * 实例：
@@ -123,7 +123,7 @@ export function inferProviderKey(baseUrl: string): string {
   // 单段主机名（`com`、`myserver`）不是可辨识的域名，推不出有意义的品牌名
   if (labels.length < 2) return 'modelscout'
 
-  // 1) 吃掉公共后缀
+  // 1) 剥离公共后缀
   let rest = labels
   if (labels.length >= 3 && MULTI_PART_SUFFIXES.has(labels.slice(-2).join('.'))) {
     rest = labels.slice(0, -2)
@@ -138,7 +138,7 @@ export function inferProviderKey(baseUrl: string): string {
 
   // punycode 形式（`xn--...`）是中文等非 ASCII 域名的编码结果，
   // 拿它当 provider 名字毫无可读性，不如回退到通用值。
-  // ⚠️ 必须在 sanitize **之前**判断 —— sanitize 会把 `xn--` 的
+  // 注意：必须在 sanitize **之前**判断 —— sanitize 会把 `xn--` 的
   // 双连字符合并成单连字符，那时就认不出来了。
   const rawLabel = rest[rest.length - 1] ?? ''
   if (!rawLabel || rawLabel.startsWith('xn--')) return 'modelscout'
@@ -151,7 +151,7 @@ export function inferProviderKey(baseUrl: string): string {
  *
  * 不直接依赖 `new URL()` —— 用户填的可能是 `192.168.66.202:8765/v1`
  * 这种没有协议头的裸地址，`new URL()` 会抛异常。
- * 这里先尝试标准解析，失败则退回手工切分。
+ * 这里先尝试标准解析，失败则回退到手动切分。
  */
 function extractHost(baseUrl: string): string {
   const trimmed = (baseUrl ?? '').trim()
@@ -162,7 +162,7 @@ function extractHost(baseUrl: string): string {
     try {
       return new URL(trimmed).hostname
     } catch {
-      /* 落到下面的手工解析 */
+      /* 交由下方的手动解析处理 */
     }
   }
 
@@ -306,7 +306,7 @@ export function sanitizeEnvVarName(raw: string): string {
  * 密钥是否算「已填写」。
  *
  * 判断依据刻意宽松：只要非空就算填了。
- * 我们不校验格式 —— 各家网关的 key 前缀五花八门（`sk-` / `glm-` / 纯十六进制），
+ * 此处不校验格式 —— 各家网关的 key 前缀格式各异（`sk-` / `glm-` / 纯十六进制），
  * 在这里做格式校验只会误伤。
  */
 export function hasApiKey(apiKey: string | undefined): boolean {

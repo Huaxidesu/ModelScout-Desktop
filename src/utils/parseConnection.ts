@@ -10,7 +10,7 @@
  *   - 聊天记录里甩过来的两行裸文本
  *   - 一份现成的 opencode.json / config 片段
  *
- * 让人肉从里面挑出两个值、再分别粘进两个输入框，纯属浪费生命。
+ * 若要求用户手动挑出两个值再分别粘贴，使用成本过高。
  *
  * 【设计原则：宁可少识别，不可错识别】
  * 这里最危险的失败模式不是「没找到」，而是**「找错了还默默填进去」** ——
@@ -89,13 +89,13 @@ const NON_ENDPOINT_HOSTS = [
   'youtube.com',
   'twitter.com',
   'discord.gg',
-  'localhost:1420', // 本项目的 dev server，别把用户带沟里
+  'localhost:1420', // 本项目的 dev server，需排除以免误判为端点
 ]
 
 /** 文件名式的结尾 —— 是「文档链接」而不是「API 端点」 */
 const FILE_LIKE_TAIL_RE = /\.(md|markdown|json|jsonc|html?|png|jpe?g|gif|svg|txt|ya?ml|toml|zip|pdf)$/i
 
-/** 常见顶级域名 —— 用于识别「这其实是主机名，不是密钥」 */
+/** 常见顶级域名 —— 用于识别「这实际是主机名，不是密钥」 */
 const TLD_TAIL_RE =
   /\.(com|cn|org|net|io|ai|dev|app|xyz|top|info|biz|co|me|cc|tv|site|online|tech|cloud|link|pro|store|fun|space|website|host)(\/|$|:)/i
 
@@ -201,10 +201,10 @@ export function extractConnection(raw: string): ExtractResult {
       .sort((a, b) => b.weight - a.weight || b.value.length - a.value.length)
       // 去掉「被更高分候选整个包住」的冗余项。
       // 典型例子：`sk-8090…aab` 会同时命中 sk- 规则（权重 100）和
-      // 纯十六进制规则（权重 40），后者其实是前者的尾巴 ——
+      // 纯十六进制规则（权重 40），后者实际是前者的后缀 ——
       // 不清理的话界面会显示「另有 1 个候选」，白白制造疑虑。
       //
-      // ⚠️ 必须用**严格更长**做判据，不能用 `!==`：
+      // 注意：必须用**严格更长**做判据，不能用 `!==`：
       // 同一个值常常被两条规则同时命中（`apiKey: sk-xxx` 同时命中
       // 「带标签」与「sk- 前缀」两条）。若只比较对象身份，
       // 两个候选会互相认为「对方包含我」而**双双被删掉** —— 结果是
@@ -320,7 +320,7 @@ export function scoreUrl(url: string): number {
   // 主机名与完整 URL 都比一遍：`localhost:1420` 这类带端口的黑名单项
   // 只在完整 URL 里才看得出来（host 字段是不带端口的）
   if (NON_ENDPOINT_HOSTS.some((h) => host.includes(h) || lower.includes(h))) score -= 8
-  // 光秃秃的域名（没有路径）多半是官网而不是端点
+  // 仅有域名而无路径的，多半是官网而不是端点
   if (path === '') score -= 2
 
   return score
@@ -342,7 +342,7 @@ function overlapsAny(start: number, end: number, spans: Array<[number, number]>)
  * 为什么需要：密钥正则是宽松的 `[A-Za-z0-9_\-.]{12,}`，
  * 而 `discovery-api.intern-ai.org.cn` 完全符合这个字符集。
  * 若文本里的 URL 没有写协议头（例如用户只粘了域名），
- * 这个域名就会盖过真正的密钥被选中。
+ * 这个域名会先于真正的密钥被选中。
  */
 export function looksLikeHostname(value: string): boolean {
   if (TLD_TAIL_RE.test(value)) return true

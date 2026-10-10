@@ -4,7 +4,7 @@
  * ============================================================================
  *
  * 命名推断是「生成配置」这条链上最容易出错、又最容易被忽略的一环：
- * 它错了不会报错，只会让用户拿到一份 key 长得很难看的配置。
+ * 它错了不会报错，只会让用户拿到一份 key 不直观的配置。
  * 尤其是 `api.openai.com` 被推成 `api` 这类「差一点」的结果，
  * 只有靠用例才能锁住。
  * ============================================================================
@@ -62,7 +62,7 @@ describe('inferProviderKey —— 从 Base URL 推断 provider 键名', () => {
 
 describe('inferProviderName —— 键名 → 显示名', () => {
   it('已知品牌保持厂商自己的写法', () => {
-    // 纯 title case 会得到 "Deepseek" / "Openai"，一眼假
+    // 纯 title case 会得到 "Deepseek" / "Openai"，明显是机器生成的
     expect(inferProviderName('deepseek-local')).toBe('DeepSeek Local')
     expect(inferProviderName('openai')).toBe('OpenAI')
     expect(inferProviderName('glm')).toBe('GLM')

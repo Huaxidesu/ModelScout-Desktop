@@ -152,8 +152,8 @@ onMounted(async () => {
 /**
  * Esc 退出全屏。
  *
- * 只处理全屏态 —— 内嵌态下按 Esc 什么都不做，
- * 否则用户在看日志时误按一下就把预览关了，很烦。
+ * 只处理全屏态 —— 内嵌态下按 Esc 不执行任何操作，
+ * 否则用户查看日志时误按会直接关闭预览。
  */
 function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && configMaximized.value) {
@@ -189,7 +189,7 @@ function closeConfigPreview(): void {
  * 状态机状态 → 中文标签。
  *
  * 与 Rust 的 `ProbeStatus` 枚举一一对应。
- * 之所以用对象字面量而不是 switch，是因为它天然覆盖了「未知状态」的兜底。
+ * 之所以用对象字面量而不是 switch，是因为它天然覆盖了「未知状态」的回退分支。
  */
 const STATUS_LABELS: Record<string, string> = {
   idle: '空闲',

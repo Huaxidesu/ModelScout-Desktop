@@ -24,12 +24,12 @@
 #     4. 带上 LICENSE（PolyForm Noncommercial 要求分发时附带条款）
 #     5. 带上 README.txt（源文件在 packaging/portable-readme.txt）
 #
-#   ⚠️ **不打包 WebView2 安装器**。
+#   注意：**不打包 WebView2 安装器**。
 #      程序启动时会自己检查运行库，缺了就弹中文提示并一键打开微软官网
 #      （见 src-tauri/src/webview2.rs）。把约 1.8 MB 的安装器塞进包里，
 #      对绝大多数用户（Win11 与较新的 Win10 已自带）是纯粹的浪费。
 #
-#   ⚠️ 组装脚本里不能写非 ASCII 字面量 —— 原因见该步骤内的注释。
+#   注意：组装脚本里不能写非 ASCII 字面量 —— 原因见该步骤内的注释。
 #
 # 【平台差异由 Tauri 自动处理】
 #   tauri.conf.json 的 targets 写了三个，但 Tauri 会**按当前平台静默过滤**：
@@ -42,13 +42,13 @@
 #   会把 `src-tauri/` 这种目录也交给 gh，于是报：
 #     read artifacts/src-tauri: is a directory
 #   所以 release job 里多了一步「整理发行文件」：递归挑出四类发行文件、
-#   摊平到 release-files/，并校验齐全 + 查重名。
+#   摊平到 release-files/，并检查齐全 + 查重名。
 #   后续的发布说明与上传都只认 release-files/。
 #
 # 【Actions 版本要求 Node 24】
 #   actions/checkout、setup-node、upload-artifact、download-artifact
 #   都升到了原生使用 node24 的版本（旧版在 runner 上会被强制降级运行并告警）。
-#   ⚠️ 注意这只影响 Actions 自身，项目构建用的仍是 Node 22（见 setup-node 的
+#   注意这只影响 Actions 自身，项目构建用的仍是 Node 22（见 setup-node 的
 #      node-version），两者无关。
 # ============================================================================
 
@@ -86,10 +86,10 @@ env:
 
 jobs:
   # --------------------------------------------------------------------------
-  # 准备：解析版本号与标签，并跑一遍前端测试作为发布校验
+  # 准备：解析版本号与标签，并跑一遍前端测试作为发布前检查
   # --------------------------------------------------------------------------
   prepare:
-    name: 准备与校验
+    name: 准备与检查
     runs-on: ubuntu-22.04
     outputs:
       version: ${{ steps.ver.outputs.version }}
@@ -127,7 +127,7 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
 
-      - name: 发布校验 —— 前端单元测试
+      - name: 发布前检查 —— 前端单元测试
         # 宁可构建前多花 20 秒，也不要把一份测试不过的产物发出去
         run: npm test
 
@@ -166,9 +166,9 @@ jobs:
 
       - name: 组装免安装版压缩包
         shell: pwsh
-        # ⚠️ 本步骤的 run 脚本必须**整段纯 ASCII**（注释也不例外）。
+        # 本步骤的 run 脚本必须**整段纯 ASCII**（注释也不例外）。
         #
-        # 踩过的坑：最初把「使用说明」的中文直接写成 PowerShell 字符串数组，
+        # 已知问题：最初把「使用说明」的中文直接写成 PowerShell 字符串数组，
         # 结果脚本文件落盘时的编码与 PowerShell 读取时的编码假设不一致，
         # 中文被当成 GBK 解析 —— `'1. 解压整个文件夹'` 变成
         # `'1. 瑙ｅ帇鏁翠釜鏂囦欢澶癸紙'`，引号配对错乱，
@@ -281,7 +281,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: 检出代码
-        # ⚠️ 这一步**必须**有，哪怕本 job 不编译任何东西。
+        # 注意：这一步**必须**有，哪怕本 job 不编译任何东西。
         #
         # `gh release create --target <sha>` 会**先调 git 去解析那个 SHA**，
         # 没有仓库就直接失败：
@@ -298,7 +298,7 @@ jobs:
           merge-multiple: true
 
       - name: 整理发行文件
-        # ⚠️ 这一步不能省。
+        # 注意：这一步不能省。
         #
         # download-artifact 会**保留每个 artifact 内部的目录结构**，
         # 所以下载完得到的是一棵目录树，而不是一堆平铺的文件：
@@ -438,7 +438,7 @@ jobs:
 
           # 只把**文件**交给 gh。传目录会被拒：
           #   read artifacts/src-tauri: is a directory
-          # release-files/ 里只会有文件（上一步保证过），这里再兜一次空目录。
+          # release-files/ 里只会有文件（上一步保证过），这里再针对空目录做一次防御性处理。
           shopt -s nullglob
           assets=(release-files/*)
           shopt -u nullglob
@@ -449,7 +449,7 @@ jobs:
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            # ⚠️ 这条分支是**必须**的，不是锦上添花：
+            # 这条分支是**必需的**，不是可选优化：
             # 上一次运行可能已经把 Release 建出来了、只是附件没传完
             # （比如这次要修的目录报错）。此时再 create 会直接报
             # "release already exists"，让人误以为是新问题。

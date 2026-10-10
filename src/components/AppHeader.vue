@@ -10,7 +10,7 @@
  *   3. 提供数据区（Tauri 窗口拖拽）—— 用 data-tauri-drag-region 实现
  *
  * 【权限说明】
- * 窗口拖拽需要 capabilities/default.json 中放行
+ * 窗口拖拽需要 capabilities/default.json 中授权
  * `core:window:allow-start-dragging`，已在权限文件中配置。
  * ============================================================================
  */

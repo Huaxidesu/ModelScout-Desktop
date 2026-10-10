@@ -28,16 +28,16 @@ import re
 import sys
 from pathlib import Path
 
-# ---- 让中文状态信息在任何输出环境下都打得出来 ----
+# ---- 保证中文状态信息在任何输出环境下都能正确输出 ----
 # Windows 上 stdout 被重定向时（CI 日志 / 管道 / `> 文件`），Python 按系统 ANSI
-# 代码页编码输出 —— en-US 环境是 cp1252，编码不了中文，第一句 print 就抛
-# UnicodeEncodeError 把整个校验搞挂（GitHub Actions 的 windows runner 实测踩到）。
+# 代码页编码输出 —— en-US 环境是 cp1252，编码不了中文，第一条 print 语句即抛
+# UnicodeEncodeError 导致整个检查失败（已在 GitHub Actions 的 windows runner 上复现）。
 # 本地中文 Windows 控制台代码页是 GBK，能编码中文，所以本地一直没暴露。
 #
 # 为什么无条件切、不判断 isatty：
 #   控制台场景本来就是 UTF-8（Python 在 Windows 上走控制台 API），切换是空操作；
 #   而 isatty() 并不可靠 —— 实测在 Git Bash 下把 stdout 重定向到文件时它仍返回
-#   True，据此跳过兜底就会漏掉真正的重定向场景。
+#   True，据此跳过回退处理就会漏掉真正的重定向场景。
 # errors="replace" 是最后一层保险：一句状态信息不值得让检查失败。
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -261,7 +261,7 @@ def ensure_model_info_import(name: str) -> None:
         return
 
     # 否则新加一行：插在「最后一个完整 import 语句」之后。
-    # ⚠️ 不能用「最后一个以 import 开头的行」—— 多行 import 的续行会误导。
+    # 不能用「最后一个以 import 开头的行」—— 多行 import 的续行会误导。
     # 做法：逐行扫描，维护「当前是否处于多行 import 中」的状态。
     lines = text.split("\n")
     insert_at = -1

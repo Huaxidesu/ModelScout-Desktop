@@ -95,7 +95,7 @@ function normalizeError(raw: unknown): ProbeApiError {
     return new ProbeApiError('unknown', raw.message, 0)
   }
 
-  // 形态 4：其他（兜底）
+  // 形态 4：其他（回退分支）
   return new ProbeApiError('unknown', String(raw), 0)
 }
 

@@ -48,7 +48,7 @@ use crate::models::{
 ///
 /// **为什么要这层抽象**：`run_engine` 原本直接依赖 `AppHandle`，
 /// 导致它**无法在没有 Tauri 应用的场景下被测试** ——
-/// D-37 那个「界面永远 0/0」的 bug 正因如此逃过了全部校验。
+/// D-37 那个「界面永远 0/0」的 bug 正因如此逃过了全部检查。
 ///
 /// 引入本 trait 后：
 ///   - 生产环境传 [`TauriSink`]（内部就是 `AppHandle::emit`）；
@@ -494,7 +494,7 @@ fn parse_declared_caps(item: &Value) -> DeclaredCaps {
         }
     }
 
-    // ---------- 兜底：部分网关把上限放在顶层字段 ----------
+    // ---------- 回退：部分网关把上限放在顶层字段 ----------
     if caps.context_limit.is_none() {
         caps.context_limit = item
             .get("context_length")
@@ -708,8 +708,8 @@ fn inspect_response(text: &str) -> (bool, bool) {
             }
         }
 
-        // ⚠️ JSON 解析成功时**必须直接返回结构化结论**，绝不能落到下面的
-        //    子串兜底。
+        // 注意：JSON 解析成功时**必须直接返回结构化结论**，绝不能落到下面的
+        //    子串回退。
         //
         // 【之前为什么错】原实现在这里写的是
         //        if has_tool_calls || has_reasoning { return ...; }
@@ -721,7 +721,7 @@ fn inspect_response(text: &str) -> (bool, bool) {
         //    这与探测语义直接冲突：字段存在 ≠ 有推理内容。服务端返回空串
         //    恰恰说明该模型**没有**产出推理，必须判定为 false。
         //
-        //    子串兜底的本意是「JSON 都解析不出来时的无奈之举」，
+        //    子串回退的本意是「仅在 JSON 完全解析不出来时使用」，
         //    只要 JSON 解析成功，结构化信息永远比子串匹配可信。
         return (has_tool_calls, has_reasoning);
     }
@@ -998,8 +998,8 @@ pub struct LimitProbeOutcome {
 /// 【流程】
 ///   1. 先用本地字典匹配（本函数调用方已做，这里只处理未命中的情况）。
 ///   2. 发送 `max_tokens = 999999` 的最小请求。
-///   3. 若服务端**竟然接受了**（2xx）—— 说明该端点不做上限校验，
-///      我们无法由此反推，返回 Unknown 并说明原因。
+///   3. 若服务端**直接接受了**（2xx）—— 说明该端点不做上限校验，
+///      无法由此反推，返回 Unknown 并说明原因。
 ///   4. 若报错，则用 `max_tokens::parse_limits` 解析正文。
 ///      解析到 → `LimitSource::ErrorParse`；解析不到 → `Unknown`。
 ///
@@ -1067,7 +1067,7 @@ pub async fn probe_limits_by_error(client: &ApiClient, model_id: &str) -> LimitP
     let ctx = parsed.context_limit.unwrap_or(0);
     let out = parsed.max_output_limit.unwrap_or(0);
 
-    // 一致性兜底：只解析到输出上限而没解析到上下文时，
+    // 一致性回退：只解析到输出上限而没解析到上下文时，
     // 用「输出上限」作为上下文的保守下界（上下文必定 >= 输出上限）。
     let (context_limit, evidence) = if ctx == 0 && out > 0 {
         (
@@ -1169,7 +1169,7 @@ pub fn now_ms() -> u64 {
 /// 统一的进度发射函数。
 ///
 /// 所有进度事件都经由此处，保证：
-///   1. payload 字段完整（前端无需做空值兜底）
+///   1. payload 字段完整（前端无需做空值回退）
 ///   2. percent 由后端统一计算，避免前端与后端算出不同进度
 #[allow(clippy::too_many_arguments)]
 fn emit_progress<S: EventSink>(
@@ -1228,7 +1228,7 @@ fn compute_percent(completed: usize, total: usize, stage: ProbeStage) -> u8 {
 
 /// 统一的日志发射函数。
 ///
-/// ⚠️ 调用方必须保证 `message` 已脱敏。本函数额外做一次保险：
+/// 注意：调用方必须保证 `message` 已脱敏。本函数额外做一次保险：
 /// 若检测到疑似 Key（`sk-` 开头且长度较长）则整体打码。
 fn emit_log<S: EventSink>(
     app: &S,
@@ -1251,7 +1251,7 @@ fn emit_log<S: EventSink>(
 
 /// 对日志正文做最后一道防泄漏处理。
 ///
-/// 我们不在这里做正则全量扫描（成本高且可能误伤），
+/// 此处不做正则全量扫描（成本高且可能误伤），
 /// 只处理最典型的情况：出现 `sk-` / `Bearer ` 后跟长串时打码。
 fn sanitize_log_line(input: &str) -> String {
     static BEARER_RE: once_cell::sync::Lazy<Option<regex::Regex>> =
@@ -1659,7 +1659,7 @@ async fn probe_one_model<S: EventSink>(
             limit_outcome.evidence.clone(),
         );
     } else {
-        // 4c. 用户关闭了上限探测 → 保守兜底值，并明确标注来源
+        // 4c. 用户关闭了上限探测 → 使用保守默认值，并明确标注来源
         info.context_limit = 0;
         info.max_output_limit = 0;
         info.context_limit_source = LimitSource::Unknown;
@@ -2130,7 +2130,7 @@ mod tests {
     /// 而日志里每个模型都显示「完成」。
     ///
     /// 此前 36 个单测全是纯函数测试（解析 / 正则 / 脱敏…），
-    /// **没有任何一个覆盖这条路径**，所以那个 bug 才逃过了全部校验。
+    /// **没有任何一个覆盖这条路径**，所以那个 bug 才逃过了全部检查。
     #[tokio::test]
     async fn collect_results_returns_every_finished_model() {
         let state = RunState::new("run-test".to_string(), 2);

@@ -63,7 +63,7 @@ export const useProbeStore = defineStore('probe', () => {
   /**
    * 探测配置。
    *
-   * ⚠️ 安全说明：`apiKey` 只存在于渲染进程内存中，不写 localStorage、
+   * 注意：安全说明 —— `apiKey` 只存在于渲染进程内存中，不写 localStorage、
    * 不写文件。窗口关闭即丢失，这是刻意的设计（决策日志 D-09）。
    */
   const config = reactive<ProbeConfig>(defaultConfig())
@@ -271,7 +271,7 @@ export const useProbeStore = defineStore('probe', () => {
   /**
    * 用一次完整运行的结果覆盖 store。
    *
-   * 这是**事件丢失时的兜底路径**：`startProbe` 的返回值里带着完整结果，
+   * 这是**事件丢失时的回退路径**：`startProbe` 的返回值里带着完整结果，
    * 即使用户在探测过程中关闭又打开了 DevTools 导致事件丢失，
    * 最终也能拿到正确数据。
    */
@@ -282,7 +282,7 @@ export const useProbeStore = defineStore('probe', () => {
     // 防御：后端返回**空数组**、而事件路径已经累积出结果时，不要用空数组覆盖。
     //
     // 为什么需要：曾经出现过后端漏收集结果、返回 `models: []` + `status: 'failed'`
-    // 的 bug（见 D-37），而 `probe://model-done` 事件其实是对的 ——
+    // 的缺陷（见 D-37），而 `probe://model-done` 事件是正确的 ——
     // 此时盲目覆盖会把好不容易拿到的数据清空，界面显示「0/0 暂无探测结果」。
     // 反之若事件丢了、后端有数据，这个分支同样会用后端的正确值覆盖。
     if (summary.models.length > 0 || models.value.length === 0) {

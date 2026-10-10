@@ -11,7 +11,7 @@
  *   2. 未命中时才走「超大 max_tokens 触发报错」的探测路径（见 max_tokens.rs）。
  *
  * 【数据来源与加载顺序】
- *   1. **内嵌兜底**：本文件的 `builtin_entries()` 内嵌了一份完整字典，
+ *   1. **内嵌回退字典**：本文件的 `builtin_entries()` 内嵌了一份完整字典，
  *      保证即使资源文件丢失、被用户误删、或打包时未包含，功能也不降级。
  *   2. **外部资源覆盖**：优先尝试读取 `resources/model_params.json`，
  *      读取成功则**整体替换**内嵌数据。用户在安装目录下直接编辑该文件即可
@@ -23,7 +23,7 @@
  *     - `xxx*`         → 前缀匹配
  *     - `*xxx*`        → 包含匹配
  *
- * ⚠️ 因此**更具体的模式必须排在更宽泛的模式之前**。
+ * 注意：因此**更具体的模式必须排在更宽泛的模式之前**。
  *    例如 `gpt-4o-mini*` 必须排在 `gpt-4o*` 之前，否则 mini 会被 4o 截获。
  * ============================================================================
  */
@@ -127,7 +127,7 @@ pub fn pattern_matches(pattern: &str, model_id: &str) -> bool {
 ///   第一轮：只接受「无通配符的精确串」命中 —— 精确串永远最可信
 ///   第二轮：接受通配符命中，按 entries 顺序取第一个
 ///
-/// 这样做的好处是：即使用户（或我们）没有把具体模式排在前面，
+/// 这样做的好处是：即使没有把具体模式排在前面，
 /// `gpt-4o-mini` 也依然会被精确条目 `gpt-4o-mini` 正确截获，
 /// 而不会被宽泛的 `gpt-4o*` 抢先匹配。这消除了字典顺序的脆弱性。
 pub fn lookup_in(entries: &[DictEntry], model_id: &str) -> Option<DictHit> {
@@ -164,10 +164,10 @@ pub fn lookup_in(entries: &[DictEntry], model_id: &str) -> Option<DictHit> {
 }
 
 /* ---------------------------------------------------------------------------
- * 内嵌兜底字典
+ * 内嵌回退字典
  * ------------------------------------------------------------------------- */
 
-/// 生成内嵌的兜底字典条目。
+/// 生成内嵌的回退字典条目。
 ///
 /// 与 `resources/model_params.json` 内容保持一致。
 /// 存在的意义是「任何情况下都不至于完全没有字典」。
@@ -398,7 +398,7 @@ fn builtin_entries() -> Vec<DictEntry> {
 ///
 /// 首次访问时初始化：先尝试读取外部资源文件，失败则用内嵌数据。
 /// 用 `OnceLock<Vec<DictEntry>>` 而非 `Lazy` 的原因是 ——
-/// 我们需要在处理**读取失败**时打印一条日志，而日志需要 Tauri AppHandle，
+/// 需要在处理**读取失败**时打印一条日志，而日志需要 Tauri AppHandle，
 /// 因此把「初始化」做成显式函数由 lib.rs 在 setup 阶段调用，
 /// 结果存入这个 OnceLock。
 static DICT_ENTRIES: OnceLock<Vec<DictEntry>> = OnceLock::new();
@@ -415,7 +415,7 @@ pub fn entries() -> &'static [DictEntry] {
 ///
 /// # 返回
 /// - `Ok(Some(version))`: 成功从外部文件加载，返回其版本号
-/// - `Ok(None)`: 外部文件不存在或解析失败，已保留内嵌兜底数据
+/// - `Ok(None)`: 外部文件不存在或解析失败，已保留内嵌回退数据
 /// - `Err(msg)`: 仅在 `set` 失败（已被初始化过）时返回，实际不会发生
 pub fn init_from_resource_dir(resource_dir: &Path) -> Result<Option<String>, String> {
     let candidates = [
@@ -472,7 +472,7 @@ pub fn init_from_resource_dir(resource_dir: &Path) -> Result<Option<String>, Str
         }
     }
 
-    // 兜底：确保 OnceLock 已被内嵌数据填充
+    // 回退：确保 OnceLock 已被内嵌数据填充
     let _ = DICT_ENTRIES.get_or_init(builtin_entries);
     Ok(None)
 }
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn exact_match_wins_over_wildcard_even_when_listed_later() {
-        // 构造一个「宽泛规则恰好排在前面」的恶劣场景，
+        // 构造一个「宽泛规则恰好排在前面」的不利场景，
         // 验证双轮扫描策略仍能让精确串胜出。
         let entries = vec![
             DictEntry {

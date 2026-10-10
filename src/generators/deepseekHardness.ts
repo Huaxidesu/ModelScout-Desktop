@@ -3,7 +3,7 @@
  * ModelScout —— DeepSeekHardness 配置生成器
  * ============================================================================
  *
- * ⚠️⚠️⚠️ 重要免责说明 ⚠️⚠️⚠️
+ * 注意：重要免责说明
  *
  * DeepSeekHardness 并非本项目开发者维护的软件，其配置文件的确切格式
  * **基于模型训练数据中的公开信息整理**，可能存在以下偏差：
@@ -183,9 +183,9 @@ function resolveContext(context: GenerateContext): ResolvedContext {
  * 主生成函数
  * ------------------------------------------------------------------------- */
 
-/** 未能探测到上下文上限时的保守兜底值 */
+/** 未能探测到上下文上限时的回退值（保守默认值） */
 const DEFAULT_CONTEXT = 8192
-/** 未能探测到输出上限时的保守兜底值 */
+/** 未能探测到输出上限时的回退值（保守默认值） */
 const DEFAULT_OUTPUT = 4096
 
 /**
@@ -246,7 +246,7 @@ export function buildHardnessConfig(context: GenerateContext): HardnessConfig {
  * 渲染为带注释的 JSONC 文本（**推荐形态**）。
  *
  * 与 opencode.ts 一致：**不给每个模型写注释** —— 模型一多，注释量就
- * 盖过配置本身。探测依据在界面表格里看更清楚。
+ * 超过配置本身。探测依据在界面表格里看更清楚。
  */
 export function renderHardnessJsonc(context: GenerateContext): string {
   const ctx = resolveContext(context)
@@ -410,7 +410,7 @@ function escapeJsonString(input: string): string {
  *   - 需要转义 `"` 与 `\`
  *   - 反斜杠必须转义（这点与 JSON 一致）
  * 控制字符在 TOML 中的合法转义集比 JSON 小，因此这里直接移除
- * —— 实际配置里不会出现控制字符，这个处理是安全的兜底。
+ * —— 实际配置里不会出现控制字符，这个处理是安全的回退。
  */
 function tomlString(input: string): string {
   const escaped = input
@@ -428,7 +428,7 @@ function tomlString(input: string): string {
  * 校验生成结果中不存在未替换的占位符。
  *
  * 与 opencode.ts 的同名函数保持一致的检查项，
- * 保证「无残留 {{}}」这条校验对两个生成器都生效。
+ * 保证「无残留 {{}}」这项检查对两个生成器都生效。
  */
 export function validateNoPlaceholders(output: string): string[] {
   const problems: string[] = []

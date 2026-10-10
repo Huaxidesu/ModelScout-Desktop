@@ -9,7 +9,7 @@
  *     #[serde(rename_all = "camelCase")]
  *
  * 否则前端拿到的将是 snake_case 字段，与 `src/types/contracts.ts` 不匹配。
- * 这是 Tauri v2 最常见的坑之一（任务书第七节第 3 条）。
+ * 这是 Tauri v2 最常见的陷阱之一（任务书第七节第 3 条）。
  *
  * 字段顺序与 `contracts.ts` 中的接口保持一致，便于阶段 5 逐一交叉核对。
  * ============================================================================
@@ -26,7 +26,7 @@ use crate::error::ProbeError;
 /// 能力探测的三态结果。
 ///
 /// 与前端 `TriState` 对应。用三态而非 bool 的原因：
-/// 探测失败（例如上游 500）时我们**无法判定**支持与否，
+/// 探测失败（例如上游 500）时**无法判定**支持与否，
 /// 强行记为 false 会误导用户，故保留 `Unknown`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,7 +62,7 @@ pub enum LimitSource {
     Dictionary,
     /// 通过超大 max_tokens 触发报错后解析得出
     ErrorParse,
-    /// 使用保守兜底值
+    /// 使用回退值
     Fallback,
     /// 未能获取
     Unknown,
@@ -144,7 +144,7 @@ impl ProbeStage {
 
 /// `start_probe` 的入参。
 ///
-/// ⚠️ 安全提示：`api_key` 字段是唯一持有 Key 明文的载体。
+/// 安全提示：`api_key` 字段是唯一持有 Key 明文的载体。
 /// 它**绝不**被序列化回前端（本结构体虽 derive 了 Serialize 以便日志调试，
 /// 但全项目代码中没有任何一处把 ProbeConfig 直接 emit 出去），
 /// 也**绝不**被打印。参见 `error::redact_key`。

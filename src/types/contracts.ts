@@ -65,7 +65,7 @@ export type TriState = 'supported' | 'unsupported' | 'unknown'
  * - `declared`    : **接口在 /models 中直接声明**，最可信（服务端自己说的）
  * - `dictionary`  : 命中本地参数字典，可信度高
  * - `errorParse`  : 通过超大 max_tokens 触发报错后解析得出
- * - `fallback`    : 使用保守兜底值
+ * - `fallback`    : 使用回退值（保守默认值）
  * - `unknown`     : 未能获取，前端应展示为「未知」而非 0
  */
 export type LimitSource = 'declared' | 'dictionary' | 'errorParse' | 'fallback' | 'unknown'
@@ -308,7 +308,7 @@ export interface PingResult {
  * `save_config_file` 命令的入参。
  * 对应 Rust 结构体：`models::SaveConfigRequest`
  *
- * ⚠️ 安全约束：`fileName` 不得包含路径分隔符（`/` `\`）或 `..`，
+ * 注意：安全约束 —— `fileName` 不得包含路径分隔符（`/` `\`）或 `..`，
  * Rust 端会做校验并拒绝非法文件名，防止路径穿越。
  */
 export interface SaveConfigRequest {

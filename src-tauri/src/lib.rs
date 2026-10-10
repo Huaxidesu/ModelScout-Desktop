@@ -35,7 +35,7 @@ pub mod webview2;
 
 use commands::AppState;
 
-// ⚠️ `tauri::Manager` 必须显式引入：
+// 注意：`tauri::Manager` 必须显式引入：
 //    `app.path()` / `app.manage()` / `app.emit()` 等方法都由该 trait 提供。
 //    Tauri v2 不在 prelude 中自动导出它（v1 会自动导出），
 //    漏掉这一行会报 "no method named `path` found for `&mut tauri::App`"。
@@ -46,12 +46,12 @@ use tauri::Manager;
 /// 由 `main.rs` 调用；移动端入口（若将来添加）也会调用它。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // ---- 启动前把关（Windows）----
+    // ---- 启动前检查（preflight，Windows）----
     // 缺 WebView2 运行库时，Tauri 会在创建窗口那一步直接失败，
     // 用户看到的现象是「双击没反应」，完全无从下手。
     // 这里提前拦下来，给一句中文说明 + 一键打开官网。
     //
-    // ⚠️ 必须在 Builder 之前 —— 一旦开始建窗口，就只剩 Tauri 自己的英文提示了。
+    // 注意：必须在 Builder 之前 —— 一旦开始建窗口，就只剩 Tauri 自己的英文提示了。
     #[cfg(windows)]
     webview2::ensure_runtime();
 
@@ -68,7 +68,7 @@ pub fn run() {
         .setup(|app| {
             // 初始化模型参数字典：
             // 优先从打包资源中读取 resources/model_params.json，
-            // 失败则使用编译期内嵌的兜底字典（保证功能不降级）。
+            // 失败则回退到编译期内嵌字典（保证功能不降级）。
             match app.path().resource_dir() {
                 Ok(dir) => match dictionary::init_from_resource_dir(&dir) {
                     Ok(Some(version)) => {
@@ -99,7 +99,7 @@ pub fn run() {
             Ok(())
         })
         // ---- 命令注册 ----
-        // ⚠️ 这里的 7 个名字必须与前端 src/api/commands.ts 中的
+        // 注意：这里的 7 个名字必须与前端 src/api/commands.ts 中的
         //    COMMAND_NAMES 常量逐字一致，阶段 5 QA 会逐一核对。
         .invoke_handler(tauri::generate_handler![
             commands::list_models,        // 1. 拉取模型列表

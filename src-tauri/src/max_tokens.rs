@@ -44,7 +44,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 /* ---------------------------------------------------------------------------
- * 合理区间守卫
+ * 合理区间约束
  * ------------------------------------------------------------------------- */
 
 /// 输出上限的合理最小值。小于此值的数字基本可以判定不是「输出上限」，
@@ -156,7 +156,7 @@ static CONTEXT_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
 /// ```
 ///
 /// 这句话本身就是「你超限了」的陈述 —— 陈述里给了上限值，
-/// 恰恰是我们最想要的信号。因此把它纳入 hint，否则会在前置检查处
+/// 恰恰是最需要的信号。因此把它纳入 hint，否则会在前置检查处
 /// 直接返回空结果，白白丢掉一个可用的上限值。
 static TOO_LARGE_HINT: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -234,7 +234,7 @@ fn parse_number(digits: &str, suffix: Option<&str>) -> Option<u64> {
     Some(value.round() as u64)
 }
 
-/// 从一段文本中取出第一个捕获到的合法数字（应用区间守卫）。
+/// 从一段文本中取出第一个捕获到的合法数字（应用区间约束）。
 fn first_valid_number(regex: &Regex, text: &str, min: u64, max: u64) -> Option<(u64, String)> {
     for caps in regex.captures_iter(text) {
         // 捕获组 1 是数字本体，组 2 是可选后缀
@@ -289,8 +289,8 @@ pub fn parse_limits(text: &str) -> LimitParseResult {
     let mut evidences: Vec<String> = Vec::new();
 
     // ---- 输出上限 ----
-    // 遍历全部模式，收集全部候选值，取「不太可能是我们请求的那个值」中的最大者。
-    // 我们请求的探测值通常 >= 999999，因此把 999999 本身排除掉。
+    // 遍历全部模式，收集全部候选值，取「不太可能是探测请求发送的值」中的最大者。
+    // 探测请求发送的值通常 >= 999999，因此把 999999 本身排除掉。
     let mut output_candidates: Vec<(u64, String)> = Vec::new();
     for re in OUTPUT_PATTERNS.iter() {
         for caps in re.captures_iter(text) {
@@ -305,7 +305,7 @@ pub fn parse_limits(text: &str) -> LimitParseResult {
             }
         }
     }
-    // 优先选择「明显不是我们送出去的探测值」的候选：把 >= 900000 的当作回显请求值剔除。
+    // 优先选择「明显不是探测请求送出的值」的候选：把 >= 900000 的当作回显请求值剔除。
     let filtered: Vec<(u64, String)> = output_candidates
         .iter()
         .filter(|(v, _)| *v < 900_000)
@@ -400,7 +400,7 @@ mod tests {
         let r = parse_limits(text);
         // vLLM 用 "maximum model length" 表述被请求的 max_tokens 的上界，
         // 因此该值同时被识别为输出上限与上下文上限候选。
-        // 我们只断言输出上限 —— 这是调用方实际采用的那个。
+        // 此处只断言输出上限 —— 这是调用方实际采用的那个。
         assert_eq!(r.max_output_limit, Some(4_096));
     }
 
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn rejects_absurd_numbers() {
-        // 数字超出合理区间应被守卫丢弃
+        // 数字超出合理区间应被区间约束过滤掉
         let text = "max_tokens is too large, limit is 7 tokens";
         let r = parse_limits(text);
         assert_eq!(r.max_output_limit, None, "小于 256 的值应被丢弃");

@@ -17,7 +17,7 @@
     "composite": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
 
-    /* 严格模式：与阶段 5 的 vue-tsc --noEmit 校验配套 */
+    /* 严格模式：与阶段 5 的 vue-tsc --noEmit 类型检查配套 */
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,

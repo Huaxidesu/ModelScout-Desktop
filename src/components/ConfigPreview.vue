@@ -97,7 +97,7 @@ const hardnessRef = ref<HTMLElement | null>(null)
  * 【设计：推断值当默认，用户输入当覆盖】
  * `xxxOverride === null` 表示「跟随推断」，一旦用户动过输入框就固定下来。
  * 这样 Base URL 一改，键名会自动跟着变（用户没手动改过的话），
- * 而用户改过之后我们的自动推断不会再把他的输入冲掉。
+ * 而用户改过之后自动推断不会再覆盖其输入。
  */
 
 /** provider 键名的人工覆盖值；null = 跟随 Base URL 推断 */
@@ -125,7 +125,7 @@ const providerKeyInput = computed<string>({
  * 真正写进配置的键名 —— 已规整成合法形态。
  *
  * 规整放在**这里**而不是输入框的 setter：用户打字过程中
- * `my-` 这种中间态必须被原样保留，否则连字符会被吃掉、根本打不出
+ * `my-` 这种中间态必须被原样保留，否则连字符会被规整掉，无法输入
  * `my-key`。规整只在生成时发生，用户看到的是自己输入的内容。
  */
 const providerKey = computed<string>(
@@ -350,7 +350,7 @@ async function copyActive(): Promise<void> {
       copied.value = null
     }, 1500)
   } else {
-    // 全部失败：帮用户选中代码区，让他手动 Ctrl+C
+    // 全部失败：选中代码区，供用户手动 Ctrl+C
     selectActiveCode()
     message.error('剪贴板不可用，已为你选中代码内容，请按 Ctrl+C 手动复制。')
   }
@@ -420,7 +420,7 @@ async function exportActive(): Promise<void> {
  * 把文本拆成带行号的行数组。
  *
  * 【为什么前端算行号而不是用第三方编辑器组件】
- * 我们的需求是「只读预览 + 复制」，引入 CodeMirror/Monaco 会显著
+ * 此处的需求是「只读预览 + 复制」，引入 CodeMirror/Monaco 会显著
  * 增大打包体积（Monaco 约 2MB+）。手写行号 + `<pre>` 只需几十行，
  * 且渲染性能对几百行的配置文件完全够用。
  */
@@ -480,7 +480,7 @@ function highlight(line: string): string {
  * 当选中的模型集合变化时，如果预览区已打开，给一个轻提示。
  *
  * 这解决一个实际困扰：用户在表格里改了勾选，
- * 但没意识到预览区内容**已经自动跟着变了**（其实是好事，但需要告知）。
+ * 但没意识到预览区内容**已经自动跟着变了**（属预期行为，但需提示用户）。
  */
 watch(
   () => props.probe.store.selectedIds.length,

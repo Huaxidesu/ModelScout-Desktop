@@ -5,7 +5,7 @@
  *
  * 【为什么需要这个文件】（见 docs/DECISIONS.md D-37）
  *
- * D-37 那个「界面永远 0/0」的 bug 有一条**前端数据链**：
+ * D-37 中「界面永远 0/0」的缺陷有一条**前端数据链**：
  *
  *     后端 run_engine → probe://model-done 事件 → applyModelDone → models
  *                                 ↘ applySummary（命令返回值）→ models
@@ -121,7 +121,7 @@ describe('applySummary —— D-37 回归', () => {
       makeSummary({ status: 'failed', totalModels: 0, models: [], errors: [] }),
     )
 
-    // ★ 核心断言：已有结果不能被空数组冲掉
+    // 核心断言：已有结果不能被空数组覆盖
     expect(store.models).toHaveLength(3)
     expect(store.total).toBe(3)
     expect(store.completed).toBe(3)
@@ -163,7 +163,7 @@ describe('applySummary —— D-37 回归', () => {
     store.applySummary(makeSummary({ status: 'done', totalModels: 1, models: [makeModel('a')] }))
 
     expect(store.models.map((m) => m.id)).toEqual(['a'])
-    // ★ 关键：勾选数量必须与「实际存在的模型」一致。
+    // 关键：勾选数量必须与「实际存在的模型」一致。
     //   否则界面会显示「生成配置 (3)」而实际只能生成 1 个 ——
     //   这正是 D-37 截图里「结果表 0/0、按钮却写生成配置 (10)」的成因。
     expect(store.selectedIds).toEqual(['a'])
@@ -381,7 +381,7 @@ describe('勾选逻辑', () => {
 })
 
 /* ---------------------------------------------------------------------------
- * patchModel（手工修改上限）
+ * patchModel（手动修改上限）
  * ------------------------------------------------------------------------- */
 
 describe('patchModel', () => {

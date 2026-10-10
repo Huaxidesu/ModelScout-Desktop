@@ -42,7 +42,7 @@ const modelRows = computed(() => props.probe.store.models)
  *
  * 【为什么需要这个】
  * `models` 只在模型**完全探测完**时才被追加。
- * 探测中我们只能从 `stageByModel` 得知「某个 ID 正在处理」。
+ * 探测中此处只能从 `stageByModel` 得知「某个 ID 正在处理」。
  * 把这两者合并展示，用户才能看到实时进展而不是一片空白。
  */
 const inflight = computed(() => {
