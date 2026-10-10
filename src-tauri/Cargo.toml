@@ -1,5 +1,9 @@
 [package]
 name = "modelscout"
+# 版本号的单一事实来源是项目根目录 package.json 的 "version" 字段：
+#   - tauri.conf.json 的 "version": "../package.json" 会在构建/打包时读取它并覆盖此处的值；
+#   - 这里仅作为 crate 元数据（cargo 语法必需），升级版本号时请只改 package.json，
+#     并在发布前运行 `cargo build` 让 Cargo.lock 自动同步此字段。
 version = "0.1.1"
 description = "ModelScout —— 大模型 API 探测与配置生成桌面应用"
 authors = ["Huaxidesu"]

@@ -22,7 +22,7 @@ import { getVersion } from '@tauri-apps/api/app'
 import { getDictionaryInfo } from '@/api/commands'
 
 /** 应用版本（来自 tauri.conf.json，由 Tauri 运行时提供） */
-const version = ref('0.1.1')
+const version = ref('')
 
 /** 内置字典条目数，用于展示「数据新鲜度」 */
 const dictCount = ref<number | null>(null)
