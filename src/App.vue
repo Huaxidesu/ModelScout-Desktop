@@ -28,6 +28,7 @@ import {
 } from 'naive-ui'
 
 import AppHeader from '@/components/AppHeader.vue'
+import AboutDialog from '@/components/AboutDialog.vue'
 import ConnectionForm from '@/components/ConnectionForm.vue'
 import ProbeControl from '@/components/ProbeControl.vue'
 import ProgressPanel from '@/components/ProgressPanel.vue'
@@ -130,6 +131,9 @@ const themeOverrides: GlobalThemeOverrides = {
 /** 底部配置预览区是否展开 */
 const showConfig = ref(false)
 
+/** 「关于」弹窗是否显示（由 AppHeader 的入口触发） */
+const showAbout = ref(false)
+
 /**
  * 配置预览是否放大到全屏。
  *
@@ -217,7 +221,11 @@ const statusLabel = computed(
       <NDialogProvider>
         <div class="flex h-screen w-screen flex-col bg-ms-bg text-ms-text">
           <!-- ============ 顶栏 ============ -->
-          <AppHeader class="shrink-0" :status="probe.store.status" />
+          <AppHeader
+            class="shrink-0"
+            :status="probe.store.status"
+            @open-about="showAbout = true"
+          />
 
           <!-- ============ 主体：三段式纵向布局 ============ -->
           <div class="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3">
@@ -323,6 +331,9 @@ const statusLabel = computed(
             </div>
           </div>
         </Teleport>
+
+        <!-- ============ 关于弹窗 ============ -->
+        <AboutDialog v-model:show="showAbout" />
       </NDialogProvider>
     </NMessageProvider>
   </NConfigProvider>
