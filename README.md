@@ -60,6 +60,8 @@ chmod +x ModelScout_*.AppImage
 
 支持通过「从文本识别」功能，从包含连接信息的文本中提取 API 地址及密钥，包括服务商提供的配置示例或已有配置文件。
 
+![从文本识别连接信息](assets/images/connection-text.png)
+
 ### 2. 执行模型探测
 
 点击「开始探测」，应用将获取模型列表，并对选定模型执行能力与参数检测。
@@ -67,6 +69,8 @@ chmod +x ModelScout_*.AppImage
 探测过程中可实时查看执行进度、状态及日志，也可以随时停止任务。
 
 默认并发数为 3，可根据 API 服务的速率限制进行调整。遇到 HTTP 429 错误时，建议将并发数降低至 1–2。
+
+![模型探测结果](assets/images/probe-results.png)
 
 ### 3. 生成配置文件
 
@@ -80,6 +84,8 @@ chmod +x ModelScout_*.AppImage
 - 放大配置预览区域
 
 对于未能自动识别的参数，可双击结果表格中的对应字段进行编辑。
+
+![配置预览与复制](assets/images/config-preview.png)
 
 ## 探测能力
 
