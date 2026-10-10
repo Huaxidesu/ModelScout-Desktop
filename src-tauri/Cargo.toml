@@ -1,6 +1,6 @@
 [package]
 name = "modelscout"
-version = "0.1.0"
+version = "0.1.1"
 description = "ModelScout —— 大模型 API 探测与配置生成桌面应用"
 authors = ["Huaxidesu"]
 # PolyForm Noncommercial 1.0.0：允许非商业用途下的使用、修改与分发。

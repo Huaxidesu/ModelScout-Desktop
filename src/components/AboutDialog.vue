@@ -30,7 +30,7 @@ const emit = defineEmits<{
 }>()
 
 /** 应用版本（来自 tauri.conf.json，由 Tauri 运行时提供） */
-const version = ref('0.1.0')
+const version = ref('0.1.1')
 
 onMounted(async () => {
   try {
