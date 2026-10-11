@@ -11,6 +11,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Huaxidesu/ModelScout-Mobile"><img src="https://img.shields.io/badge/手机版-ModelScout-3DDC84" alt="手机版 ModelScout"></a>
   <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri-2.x-24C8DB" alt="Tauri"></a>
   <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3.5-42B883" alt="Vue"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.85%2B-000000" alt="Rust"></a>
@@ -18,6 +19,8 @@
 </p>
 
 ## 项目简介
+
+本项目提供**桌面版**与**手机版**两个版本，功能一致，本仓库为桌面版（Windows / Linux）；手机版见 [ModelScout Mobile](https://github.com/Huaxidesu/ModelScout-Mobile)。
 
 ModelScout 是一款大语言模型 API 探测与配置生成工具，适用于各类模型服务平台及自建模型服务。
 
