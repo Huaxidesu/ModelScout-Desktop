@@ -236,11 +236,18 @@ function clearRecognize(): void {
             placeholder="https://api.openai.com/v1"
             clearable
           />
+          <!--
+            consistent-menu-width：Naive 的 NSelect 默认让下拉菜单与触发器等宽
+            （内部把 Popover 的 width 直接设成触发器的像素宽），而这里触发器只有
+            130px，长预设名（「阿里通义千问 (DashScope)」）会被截成「阿里通义…」。
+            关掉它之后菜单改为按内容自适应宽度，同时保留「不小于触发器」的下限。
+          -->
           <NSelect
             :options="PRESETS"
             :disabled="disabled"
             placeholder="预设"
             style="width: 130px"
+            :consistent-menu-width="false"
             @update:value="applyPreset"
           />
         </NInputGroup>
@@ -269,6 +276,7 @@ function clearRecognize(): void {
             :options="KEY_SOURCE_OPTIONS"
             :disabled="disabled"
             style="width: 112px"
+            :consistent-menu-width="false"
             @update:value="onKeySourceChange"
           />
 

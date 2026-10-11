@@ -172,7 +172,13 @@ async function save(): Promise<void> {
 
         <div>
           <div class="mb-1 text-[11px] text-ms-text-dim">余额接口</div>
-          <NSelect v-model:value="kind" :options="KIND_OPTIONS" size="small" />
+          <!-- consistent-menu-width=false：菜单按内容自适应宽度，避免长选项被截断 -->
+          <NSelect
+            v-model:value="kind"
+            :options="KIND_OPTIONS"
+            size="small"
+            :consistent-menu-width="false"
+          />
 
           <div v-if="kind === 'custom'" class="mt-2 flex flex-col gap-2 rounded border border-ms-border bg-ms-bg/40 p-2">
             <NAlert type="info" :bordered="false" :show-icon="false">
@@ -189,7 +195,13 @@ async function save(): Promise<void> {
               placeholder="{base}/v1/dashboard/billing/subscription"
             />
             <div class="flex items-center gap-2">
-              <NSelect v-model:value="method" :options="METHOD_OPTIONS" size="small" style="width: 96px" />
+              <NSelect
+                v-model:value="method"
+                :options="METHOD_OPTIONS"
+                size="small"
+                style="width: 96px"
+                :consistent-menu-width="false"
+              />
               <span class="text-[10px] text-ms-text-faint">额外请求头（每行一条 Name: Value）</span>
             </div>
             <NInput

@@ -550,6 +550,7 @@ watch(
 
       <div class="flex items-center gap-2">
         <!-- 形态切换 -->
+        <!-- consistent-menu-width=false：让菜单按内容自适应宽度，避免长文案被截断 -->
         <NSelect
           v-if="activeTab === 'opencode'"
           v-model:value="opencodeFormat"
@@ -560,6 +561,7 @@ watch(
           ]"
           size="tiny"
           style="width: 178px"
+          :consistent-menu-width="false"
         />
         <NSelect
           v-else
@@ -571,6 +573,7 @@ watch(
           ]"
           size="tiny"
           style="width: 150px"
+          :consistent-menu-width="false"
         />
 
         <NButton size="tiny" :loading="exporting" @click="exportActive()">
@@ -630,6 +633,7 @@ watch(
           v-model:value="apiKeyMode"
           size="tiny"
           style="width: 132px"
+          :consistent-menu-width="false"
           :options="[
             { label: '明文（可直接用）', value: 'plain' },
             { label: '环境变量引用', value: 'env' },

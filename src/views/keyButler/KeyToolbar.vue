@@ -105,6 +105,7 @@ async function stopCheck(): Promise<void> {
     <div class="mx-1 h-4 w-px bg-ms-border" />
 
     <!-- 过滤 -->
+    <!-- consistent-menu-width=false：菜单按内容自适应宽度，避免长平台名被截断 -->
     <NSelect
       v-model:value="store.filterPlatform"
       :options="store.platformOptions"
@@ -112,6 +113,7 @@ async function stopCheck(): Promise<void> {
       clearable
       placeholder="全部平台"
       style="width: 132px"
+      :consistent-menu-width="false"
     />
     <NSelect
       v-model:value="store.filterStatus"
@@ -122,6 +124,7 @@ async function stopCheck(): Promise<void> {
       max-tag-count="responsive"
       placeholder="全部状态"
       style="width: 190px"
+      :consistent-menu-width="false"
     />
     <NInput
       v-model:value="store.keyword"

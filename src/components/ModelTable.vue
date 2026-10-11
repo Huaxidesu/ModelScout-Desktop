@@ -568,11 +568,13 @@ const FILTER_OPTIONS = [
       />
 
       <!-- 能力筛选 -->
+      <!-- consistent-menu-width=false：菜单按内容自适应宽度，避免长文案被截断 -->
       <NSelect
         v-model:value="filterCapability"
         :options="FILTER_OPTIONS"
         size="tiny"
         style="width: 104px"
+        :consistent-menu-width="false"
       />
 
       <div class="mx-1 h-4 w-px bg-ms-border" />
@@ -592,6 +594,7 @@ const FILTER_OPTIONS = [
         size="tiny"
         placeholder="条件选择…"
         style="width: 160px"
+        :consistent-menu-width="false"
         :value="null"
         @update:value="applySelectPreset"
       />
