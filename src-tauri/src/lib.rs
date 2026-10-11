@@ -43,11 +43,41 @@ use commands::AppState;
 //    漏掉这一行会报 "no method named `path` found for `&mut tauri::App`"。
 use tauri::Manager;
 
+/// 隐藏调试构建下附带出来的控制台窗口。
+///
+/// 【为什么用运行期隐藏，而不是再加一个 `windows_subsystem` 属性】
+/// `#![windows_subsystem = "windows"]` 是编译期的，一旦开启，debug 构建就再也
+/// 拿不到 stdout / stderr —— 而排查启动问题（字典加载、前缀表、WebView2 检查）
+/// 恰恰最需要这些输出。运行期调用 `ShowWindow(SW_HIDE)` 只把窗口藏起来：
+/// 界面干净了，日志仍可被重定向捕获。
+///
+/// release 构建已经在 `main.rs` 用编译期属性去掉了控制台，
+/// 此时 `GetConsoleWindow()` 返回空句柄，本函数自动跳过。
+#[cfg(windows)]
+fn hide_console_window() {
+    use windows_sys::Win32::System::Console::GetConsoleWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+
+    // SAFETY: 两个调用都没有内存副作用。无控制台时 GetConsoleWindow 返回空句柄，
+    // 此时不会调用 ShowWindow。
+    unsafe {
+        let handle = GetConsoleWindow();
+        if !handle.is_null() {
+            ShowWindow(handle, SW_HIDE);
+        }
+    }
+}
+
 /// 应用入口。
 ///
 /// 由 `main.rs` 调用；移动端入口（若将来添加）也会调用它。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // ---- 隐藏控制台窗口（Windows）----
+    // 必须放在最前面：一旦开始建窗口，再藏控制台会让用户看到一次闪烁。
+    #[cfg(windows)]
+    hide_console_window();
+
     // ---- 启动前检查（preflight，Windows）----
     // 缺 WebView2 运行库时，Tauri 会在创建窗口那一步直接失败，
     // 用户看到的现象是「双击没反应」，完全无从下手。

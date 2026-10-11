@@ -31,6 +31,17 @@ const props = defineProps<{
 /** 是否自动滚动到底部（用户手动上滚时暂停自动滚动） */
 const autoScroll = ref(true)
 
+/**
+ * 当前显示能力摘要 tooltip 的模型 id；`null` 表示没有。
+ *
+ * 【为什么手动控制显隐，而不是用 trigger="hover"】
+ * 模型列表是可滚动的（`max-h-[42%] overflow-y-auto`），而 Naive 的浮层是
+ * teleport 到 body 上按坐标定位的。用 hover 触发时，滚动过程中鼠标坐标没变，
+ * 浮层就会跟着一起「滚出」列表容器 —— 表现为悬浮窗飘到窗格外面。
+ * 改成手动控制后，只要列表一滚动就立刻收起，问题从根上消失。
+ */
+const tooltipModelId = ref<string | null>(null)
+
 /** 日志容器的 DOM 引用 */
 const logContainer = ref<HTMLElement | null>(null)
 
@@ -118,6 +129,9 @@ watch(
 
 /** 用户滚动时更新自动滚动开关 */
 function handleScroll(): void {
+  // 日志区滚动时同样收起模型行的浮层，避免它滞留在屏幕上
+  tooltipModelId.value = null
+
   const el = logContainer.value
   if (!el) return
   // 距底部 24px 以内视为「贴着底」，此时才继续自动滚动
@@ -175,7 +189,14 @@ function summarizeModel(model: ModelInfo): string {
     </div>
 
     <!-- ---------- 模型阶段列表 ---------- -->
-    <div class="max-h-[42%] shrink-0 overflow-y-auto border-b border-ms-border px-3 py-2">
+    <!--
+      @scroll 里清空 tooltipModelId：滚动时立即收起浮层。
+      这是「悬浮窗滚出窗格」这个缺陷的修复点，详见脚本里的注释。
+    -->
+    <div
+      class="max-h-[42%] shrink-0 overflow-y-auto border-b border-ms-border px-3 py-2"
+      @scroll="tooltipModelId = null"
+    >
       <!-- 空态 -->
       <div
         v-if="modelRows.length === 0 && inflight.length === 0"
@@ -202,11 +223,16 @@ function summarizeModel(model: ModelInfo): string {
       <NTooltip
         v-for="model in modelRows"
         :key="`done-${model.id}`"
-        trigger="hover"
+        trigger="manual"
+        :show="tooltipModelId === model.id"
         style="max-width: 360px"
       >
         <template #trigger>
-          <div class="ms-fade-in flex items-center justify-between gap-2 py-1">
+          <div
+            class="ms-fade-in flex cursor-help items-center justify-between gap-2 py-1"
+            @mouseenter="tooltipModelId = model.id"
+            @mouseleave="tooltipModelId = null"
+          >
             <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-ms-text">
               {{ model.id }}
             </span>

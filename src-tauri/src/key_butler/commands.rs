@@ -183,6 +183,23 @@ fn extract_keys(text: &str) -> Vec<String> {
     // 按出现位置排序，保证「先出现的先导入」
     hits.sort_by_key(|(start, _, _)| *start);
 
+    // 去掉「被更长候选完整包住」的冗余项。
+    //
+    // 典型例子：`sk-2ee1cb8a…82bf`（sk- 后面跟 64 位十六进制）会同时命中
+    // 「已知前缀」规则与「纯十六进制」规则，后者其实是前者的**后缀** ——
+    // 不过滤的话，一条 Key 会被导入成两条。
+    //
+    // 判据必须用**严格更长**（`>`）而不是「不相等」：同一个值常常被两条规则
+    // 同时命中（如 `sk-ant-…` 同时符合前缀规则与 `sk-` 规则），
+    // 用不等号会让两个候选互相认为「对方包含我」而双双被删。
+    // 等长的重复项交给下面的 seen 去重。
+    let values: Vec<String> = hits.iter().map(|(_, _, value)| value.clone()).collect();
+    hits.retain(|(_, _, value)| {
+        !values
+            .iter()
+            .any(|other| other.len() > value.len() && other.contains(value.as_str()))
+    });
+
     let mut seen: HashSet<String> = HashSet::new();
     let mut result: Vec<String> = Vec::new();
     for (_, _, value) in hits {
@@ -905,9 +922,19 @@ mod tests {
         );
     }
 
+    /// 回归：用户实测反馈 —— 这种 Key 曾被识别成两条。
+    ///
+    /// `sk-` 后面跟 64 位十六进制，会同时命中「已知前缀」与「纯十六进制」
+    /// 两条规则；必须只保留完整的那一条。
     #[test]
-    fn extract_keys_handles_bearer_and_hex() {
-        let text = "Authorization: Bearer abcdefghijklmnopqrst\n\
+    fn extract_keys_keeps_sk_key_with_hex_body_as_one() {
+        let key = "sk-2ee1cb8ab47818520921d3bba9deb580dfb82e345ee96841bbff13aad03d82bf";
+        let keys = extract_keys(key);
+        assert_eq!(keys, vec![key.to_string()], "实际结果：{keys:?}");
+    }
+
+    #[test]
+    fn extract_keys_handles_bearer_and_hex() {        let text = "Authorization: Bearer abcdefghijklmnopqrst\n\
                     raw=0123456789abcdef0123456789abcdef";
         let keys = extract_keys(text);
         assert!(keys.iter().any(|k| k == "abcdefghijklmnopqrst"));
