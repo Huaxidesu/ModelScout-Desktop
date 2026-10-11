@@ -47,6 +47,34 @@ const emit = defineEmits<{
 /** 表格是否处于紧凑模式 */
 const dense = ref(true)
 
+/**
+ * 当前显示 tooltip 的单元格标识；`null` 表示没有。
+ *
+ * 【为什么要手动控制显隐，而不是用 trigger="hover"】
+ * 结果表格是虚拟滚动的（NDataTable `virtual-scroll`），而 Naive 的浮层是
+ * teleport 到 body 上按坐标定位的。滚动过程中鼠标坐标没有变，浮层不会重新定位，
+ * 表现就是「悬浮窗跟着一起滚出表格」。
+ * 改成受控之后，表格一滚动就整体收起 —— 与 `ProgressPanel` 的处理保持一致。
+ */
+const openTooltip = ref<string | null>(null)
+
+/**
+ * 生成「悬停即显示该 tooltip」的触发器事件属性。
+ *
+ * 每个 tooltip 用唯一的 `key` 标识（表头用标题、单元格用 `字段:行 id`），
+ * 这样同一时刻只会有一个浮层。
+ */
+function tooltipTriggerProps(key: string) {
+  return {
+    onMouseenter: () => {
+      openTooltip.value = key
+    },
+    onMouseleave: () => {
+      openTooltip.value = null
+    },
+  }
+}
+
 /* ---------------------------------------------------------------------------
  * 三态与来源的渲染辅助
  * ------------------------------------------------------------------------- */
@@ -233,12 +261,19 @@ const columns = computed<DataTableColumns<ModelInfo>>(() => [
     render: (row) =>
       h(
         NTooltip,
-        { trigger: 'hover', style: 'max-width: 340px' },
+        {
+          trigger: 'manual',
+          show: openTooltip.value === `reasoning:${row.id}`,
+          style: 'max-width: 340px',
+        },
         {
           trigger: () =>
             h(
               'span',
-              { class: row.isReasoning ? 'text-ms-info' : 'text-ms-text-faint' },
+              {
+                class: row.isReasoning ? 'text-ms-info' : 'text-ms-text-faint',
+                ...tooltipTriggerProps(`reasoning:${row.id}`),
+              },
               row.isReasoning ? '●' : '—',
             ),
           default: () => row.reasoningEvidence || '无判定依据',
@@ -292,12 +327,17 @@ const columns = computed<DataTableColumns<ModelInfo>>(() => [
       if (count === 0) {
         return h('span', { class: 'text-ms-text-faint' }, '—')
       }
+      const errorKey = `errors:${row.id}`
       return h(
         NTooltip,
-        { trigger: 'hover', style: 'max-width: 380px' },
+        { trigger: 'manual', show: openTooltip.value === errorKey, style: 'max-width: 380px' },
         {
           trigger: () =>
-            h(NBadge, { value: count, type: 'error', 'show-zero': false }),
+            h(
+              'span',
+              { class: 'inline-flex', ...tooltipTriggerProps(errorKey) },
+              [h(NBadge, { value: count, type: 'error', 'show-zero': false })],
+            ),
           default: () =>
             row.errors
               .filter((e) => e.kind !== 'cancelled')
@@ -322,12 +362,20 @@ function triColor(state: TriState): string {
 
 /** 渲染一个带 tooltip 的表头 */
 function renderHeader(title: string, hint: string) {
+  const key = `header:${title}`
   return h(
     NTooltip,
-    { trigger: 'hover', style: 'max-width: 320px' },
+    { trigger: 'manual', show: openTooltip.value === key, style: 'max-width: 320px' },
     {
       trigger: () =>
-        h('span', { class: 'cursor-help border-b border-dashed border-ms-border-strong' }, title),
+        h(
+          'span',
+          {
+            class: 'cursor-help border-b border-dashed border-ms-border-strong',
+            ...tooltipTriggerProps(key),
+          },
+          title,
+        ),
       default: () => hint,
     },
   )
@@ -376,7 +424,7 @@ function renderLimitCell(row: ModelInfo, field: 'contextLimit' | 'maxOutputLimit
   // 展示态
   return h(
     NTooltip,
-    { trigger: 'hover', style: 'max-width: 340px' },
+    { trigger: 'manual', show: openTooltip.value === cellKey, style: 'max-width: 340px' },
     {
       trigger: () =>
         h(
@@ -386,6 +434,7 @@ function renderLimitCell(row: ModelInfo, field: 'contextLimit' | 'maxOutputLimit
             onDblclick: () => {
               editingCell.value = cellKey
             },
+            ...tooltipTriggerProps(cellKey),
           },
           [
             h(
@@ -561,7 +610,12 @@ const FILTER_OPTIONS = [
     </div>
 
     <!-- ---------- 表格 ---------- -->
-    <div class="min-h-0 flex-1">
+    <!--
+      @scroll.capture：scroll 事件不冒泡，但捕获阶段能截到后代（NDataTable 内部的
+      滚动容器）的滚动。滚动时立即收起浮层，避免它「滚出表格」——
+      详见脚本里 openTooltip 的注释。
+    -->
+    <div class="min-h-0 flex-1" @scroll.capture="openTooltip = null">
       <NEmpty
         v-if="probe.store.models.length === 0"
         description="暂无探测结果"
