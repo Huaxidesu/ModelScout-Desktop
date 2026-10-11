@@ -1,6 +1,6 @@
 <div align="center">
   <img src="assets/images/logo-render.png" width="120" alt="ModelScout">
-  <h1>ModelScout</h1>
+  <h1>ModelScout Desktop</h1>
   <p>大语言模型 API 能力探测与配置生成工具</p>
 </div>
 
