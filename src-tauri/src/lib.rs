@@ -25,6 +25,7 @@ pub mod credential; // 从 Windows 凭据管理器读取 API Key（跨平台签�
 pub mod dictionary; // 本地模型参数字典
 pub mod error; // 错误分类与脱敏
 pub mod events; // 事件名常量
+pub mod key_butler; // Key 管家（Beta）：批量 Key 管理，独立模块，不改动探测逻辑
 pub mod max_tokens; // 超大 max_tokens 报错解析
 pub mod models; // 数据契约（serde camelCase）
 pub mod probe; // 探测引擎
@@ -65,6 +66,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         // ---- 全局状态 ----
         .manage(AppState::new())
+        // Key 管家自带一份状态（模块隔离，不与探测模块的 AppState 混在一起）
+        .manage(key_butler::vault::KeyButlerState::new())
         // ---- setup 钩子 ----
         .setup(|app| {
             // 初始化模型参数字典：
@@ -97,6 +100,26 @@ pub fn run() {
                     );
                 }
             }
+
+            // ---- Key 管家：前缀表 + 落盘路径 ----
+            // 前缀表：用户 app data 目录的同名文件优先，其次是打包资源，
+            // 最后是编译期内嵌（`platform::init` 内部完成三级回退）。
+            let resource_dir = app.path().resource_dir().ok();
+            let data_dir = app.path().app_data_dir().ok();
+            let resource_ref = resource_dir
+                .as_deref()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let rule_count = key_butler::platform::init(resource_ref, data_dir.as_deref());
+            println!("[ModelScout] Key 管家前缀表：{rule_count} 条规则");
+
+            // 落盘路径：密文库与余额快照都放在 app data 目录下
+            if let Some(dir) = data_dir.as_deref() {
+                app.state::<key_butler::vault::KeyButlerState>()
+                    .configure(dir);
+            } else {
+                eprintln!("[ModelScout] 无法解析应用数据目录，Key 管家的加密保存不可用");
+            }
+
             Ok(())
         })
         // ---- 命令注册 ----
@@ -109,7 +132,22 @@ pub fn run() {
             commands::stop_probe,         // 4. 中止探测
             commands::get_probe_state,    // 5. 查询实时快照
             commands::save_config_file,   // 6. 导出配置到磁盘
-            commands::get_dictionary_info // 7. 字典自检（辅助）
+            commands::get_dictionary_info, // 7. 字典自检（辅助）
+            // ---- Key 管家（Beta）：13 个命令 ----
+            // 函数名必须与前端 COMMAND_NAMES.KEY_BUTLER_* 的字符串值逐字一致
+            key_butler::commands::key_butler_import,
+            key_butler::commands::key_butler_check,
+            key_butler::commands::key_butler_check_cancel,
+            key_butler::commands::key_butler_list,
+            key_butler::commands::key_butler_reveal,
+            key_butler::commands::key_butler_delete,
+            key_butler::commands::key_butler_update_note,
+            key_butler::commands::key_butler_set_config,
+            key_butler::commands::key_butler_vault_enable,
+            key_butler::commands::key_butler_vault_unlock,
+            key_butler::commands::key_butler_vault_disable,
+            key_butler::commands::key_butler_vault_status,
+            key_butler::commands::key_butler_snapshots
         ])
         .run(tauri::generate_context!())
         .expect("ModelScout 启动失败：Tauri 应用初始化异常");

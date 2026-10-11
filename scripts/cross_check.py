@@ -118,6 +118,23 @@ PAIRS = [
     ("SaveConfigResult", "SaveConfigResult"),
 ]
 
+# Key 管家（Beta）的契约在独立文件里（模块隔离，见任务书「防混乱三原则」），
+# 因此单独指定其 Rust 源文件再核对一遍。
+KEY_BUTLER_MODELS = ("src-tauri", "src", "key_butler", "models.rs")
+KEY_BUTLER_PAIRS = [
+    ("KeyEntry", "KeyEntry"),
+    ("BalanceEndpoint", "BalanceEndpoint"),
+    ("Snapshot", "Snapshot"),
+    ("KeyImportResult", "KeyImportResult"),
+    ("KeyCheckRequest", "KeyCheckRequest"),
+    ("KeyCheckSummary", "KeyCheckSummary"),
+    ("KeyConfigPatch", "KeyConfigPatch"),
+    ("VaultStatus", "VaultStatus"),
+    ("KeyCheckProgress", "KeyCheckProgress"),
+    ("KeyCheckEntryDone", "KeyCheckEntryDone"),
+    ("KeyCheckFinished", "KeyCheckFinished"),
+]
+
 
 def main() -> int:
     rust_text = read(os.path.join(ROOT, "src-tauri", "src", "models.rs"))
@@ -216,6 +233,41 @@ def main() -> int:
             failures += 1
         else:
             print(f"  ✓ {rust_name} ↔ {ts_name}  ({len(rust_fields)} 字段一致)")
+
+    print()
+    print("-" * 72)
+    print("Key 管家（Beta）：key_butler/models.rs  vs  contracts.ts")
+    print("-" * 72)
+    kb_path = os.path.join(ROOT, *KEY_BUTLER_MODELS)
+    if not os.path.exists(kb_path):
+        print("  ! 未找到 key_butler/models.rs（阶段 1 尚未落地？）")
+    else:
+        kb_text = read(kb_path)
+        for rust_name, ts_name in KEY_BUTLER_PAIRS:
+            rust_fields = extract_rust_struct(kb_text, rust_name)
+            ts_fields = extract_ts_interface(ts_text, ts_name)
+            if not rust_fields:
+                print(f"  ! {rust_name}: 未在 key_butler/models.rs 中找到")
+                failures += 1
+                continue
+            if not ts_fields:
+                print(f"  ! {ts_name}: 未在 contracts.ts 中找到")
+                failures += 1
+                continue
+
+            rust_camel = set(to_camel(f) for f in rust_fields)
+            ts_set = set(ts_fields)
+            missing = rust_camel - ts_set
+            extra = ts_set - rust_camel
+            if missing or extra:
+                print(f"  ✗ {rust_name} ({len(rust_fields)} 字段)")
+                if missing:
+                    print(f"      TS 缺失：{sorted(missing)}")
+                if extra:
+                    print(f"      TS 多余：{sorted(extra)}")
+                failures += 1
+            else:
+                print(f"  ✓ {rust_name} ↔ {ts_name}  ({len(rust_fields)} 字段一致)")
 
     print()
     print("=" * 72)

@@ -19,6 +19,9 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { EVENT_NAMES } from '@/types/contracts'
 import type {
+  KeyCheckEntryDone,
+  KeyCheckFinished,
+  KeyCheckProgress,
   ProbeProgress,
   ProbeLog,
   ProbeModelDone,
@@ -118,6 +121,74 @@ export async function subscribeAll(handlers: {
   }
 
   // 返回一个幂等的取消函数
+  return async () => {
+    for (const unlisten of unlisteners) {
+      try {
+        unlisten()
+      } catch {
+        // 取消订阅失败不应影响卸载流程，静默忽略
+      }
+    }
+    unlisteners.length = 0
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Key 管家（Beta）—— 3 个事件
+ * ---------------------------------------------------------------------------
+ * 命名与用法完全照搬探测模块的那套：事件名只来自 `EVENT_NAMES`，
+ * 组件卸载时必须调用返回的取消函数。
+ * ------------------------------------------------------------------------- */
+
+/** 订阅「批量检测进度」事件。 */
+export function onKeyButlerProgress(
+  handler: (payload: KeyCheckProgress) => void,
+): Promise<Unlisten> {
+  return listen<KeyCheckProgress>(EVENT_NAMES.KEY_BUTLER_PROGRESS, (event) => {
+    handler(event.payload)
+  })
+}
+
+/** 订阅「单条 Key 检测完成」事件。 */
+export function onKeyButlerEntryDone(
+  handler: (payload: KeyCheckEntryDone) => void,
+): Promise<Unlisten> {
+  return listen<KeyCheckEntryDone>(EVENT_NAMES.KEY_BUTLER_ENTRY_DONE, (event) => {
+    handler(event.payload)
+  })
+}
+
+/** 订阅「整批检测结束」事件。 */
+export function onKeyButlerFinished(
+  handler: (payload: KeyCheckFinished) => void,
+): Promise<Unlisten> {
+  return listen<KeyCheckFinished>(EVENT_NAMES.KEY_BUTLER_FINISHED, (event) => {
+    handler(event.payload)
+  })
+}
+
+/**
+ * 一次性订阅 Key 管家的全部 3 个事件，返回统一的取消函数。
+ *
+ * 与探测模块的 `subscribeAll` 同一形态：一行注册、一行清理。
+ */
+export async function subscribeKeyButler(handlers: {
+  onProgress?: (payload: KeyCheckProgress) => void
+  onEntryDone?: (payload: KeyCheckEntryDone) => void
+  onFinished?: (payload: KeyCheckFinished) => void
+}): Promise<() => Promise<void>> {
+  const unlisteners: Unlisten[] = []
+
+  if (handlers.onProgress) {
+    unlisteners.push(await onKeyButlerProgress(handlers.onProgress))
+  }
+  if (handlers.onEntryDone) {
+    unlisteners.push(await onKeyButlerEntryDone(handlers.onEntryDone))
+  }
+  if (handlers.onFinished) {
+    unlisteners.push(await onKeyButlerFinished(handlers.onFinished))
+  }
+
   return async () => {
     for (const unlisten of unlisteners) {
       try {

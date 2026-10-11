@@ -468,6 +468,13 @@ export const EVENT_NAMES = {
   FINISHED: 'probe://finished',
   /** 致命错误 */
   ERROR: 'probe://error',
+  /* ---- Key 管家（Beta） ---- */
+  /** 批量检测进度（逐 key、逐阶段） */
+  KEY_BUTLER_PROGRESS: 'key-butler://progress',
+  /** 单条 Key 检测完成 */
+  KEY_BUTLER_ENTRY_DONE: 'key-butler://entry-done',
+  /** 整批检测结束 */
+  KEY_BUTLER_FINISHED: 'key-butler://finished',
 } as const
 
 /** 事件名联合类型 */
@@ -495,7 +502,261 @@ export const COMMAND_NAMES = {
   GET_PROBE_STATE: 'get_probe_state',
   /** 导出配置到用户选择的位置（供「保存文件」使用） */
   SAVE_CONFIG_FILE: 'save_config_file',
+  /* ---- Key 管家（Beta）：全部带 key_butler_ 前缀，避免与探测命令冲突 ---- */
+  /** 批量文本 → 提取 Key → 前缀识别 → 入列（去重） */
+  KEY_BUTLER_IMPORT: 'key_butler_import',
+  /** 单/批量检测（有效性 → 余额 → 分类 → 快照），进度走事件 */
+  KEY_BUTLER_CHECK: 'key_butler_check',
+  /** 请求中止当前批量检测 */
+  KEY_BUTLER_CHECK_CANCEL: 'key_butler_check_cancel',
+  /** 返回脱敏列表 */
+  KEY_BUTLER_LIST: 'key_butler_list',
+  /** 返回单个完整 Key（仅用于一键复制） */
+  KEY_BUTLER_REVEAL: 'key_butler_reveal',
+  /** 删除一条 Key */
+  KEY_BUTLER_DELETE: 'key_butler_delete',
+  /** 修改备注 */
+  KEY_BUTLER_UPDATE_NOTE: 'key_butler_update_note',
+  /** 修改 Base URL 与余额接口配置 */
+  KEY_BUTLER_SET_CONFIG: 'key_butler_set_config',
+  /** 启用加密保存（设主密码并加密现有列表） */
+  KEY_BUTLER_VAULT_ENABLE: 'key_butler_vault_enable',
+  /** 用主密码解锁已有密文库 */
+  KEY_BUTLER_VAULT_UNLOCK: 'key_butler_vault_unlock',
+  /** 关闭加密保存（清空本地密文） */
+  KEY_BUTLER_VAULT_DISABLE: 'key_butler_vault_disable',
+  /** 查询加密保存状态 */
+  KEY_BUTLER_VAULT_STATUS: 'key_butler_vault_status',
+  /** 查询某 Key 的余额快照序列 */
+  KEY_BUTLER_SNAPSHOTS: 'key_butler_snapshots',
 } as const
 
 /** 命令名联合类型 */
 export type CommandName = (typeof COMMAND_NAMES)[keyof typeof COMMAND_NAMES]
+
+/* ---------------------------------------------------------------------------
+ * 六、Key 管家（Beta）契约
+ * ---------------------------------------------------------------------------
+ * 与 `src-tauri/src/key_butler/models.rs` 逐字段一一对应（camelCase）。
+ * 契约三处同步约定同样适用于本模块：改字段必须同改
+ * `key_butler/models.rs` + 本文件 + `docs/CONTRACTS.md`。
+ *
+ * 【安全约定】`KeyEntry` **不含 Key 明文**，只有 `maskedKey`（格式
+ * `sk-ab***cdef`）。完整明文只在 `key_butler_reveal` 的返回值里出现一次，
+ * 仅供一键复制，不落日志、不落事件。
+ * ------------------------------------------------------------------------- */
+
+/**
+ * 一条 Key 的四态状态。
+ * 与 Rust 端 `key_butler::models::KeyStatus` 一一对应。
+ *
+ * - `active`       : Key 有效且余额充足
+ * - `insufficient` : Key 有效但余额 ≤ 阈值
+ * - `invalid`      : 401 / 403，Key 已失效
+ * - `error`        : 网络 / 429 / 5xx / 解析失败，有效性未知
+ *
+ * 注意：**未检测过**的 Key 也用 `error` 承载，前端以 `lastCheckedAt == null`
+ * 区分并显示「未检测」，且不计入四态汇总。
+ */
+export type KeyStatus = 'active' | 'insufficient' | 'invalid' | 'error'
+
+/**
+ * 余额接口的适配器类型。
+ * 与 Rust 端 `key_butler::models::BalanceEndpointKind` 一一对应。
+ */
+export type BalanceEndpointKind = 'builtin-oneapi' | 'none' | 'custom'
+
+/** 自定义余额接口的 HTTP 方法。与 Rust 端 `HttpMethod` 一一对应。 */
+export type HttpMethod = 'GET' | 'POST'
+
+/**
+ * 批量检测中单条 Key 所处的阶段。
+ * 与 Rust 端 `key_butler::models::CheckStage` 一一对应。
+ */
+export type CheckStage = 'pending' | 'checking' | 'balance' | 'done'
+
+/**
+ * 自定义余额接口配置（`balanceEndpoint === 'custom'` 时生效）。
+ * 对应 Rust 结构体：`key_butler::models::BalanceEndpoint`
+ */
+export interface BalanceEndpoint {
+  /** URL 模板，支持 `{base}` 占位（`{base}` = 该 Key 的 Base URL） */
+  urlTemplate: string
+  /** HTTP 方法 */
+  method: HttpMethod
+  /** 额外请求头 */
+  extraHeaders: Record<string, string>
+  /** 总额度取值路径（JSONPath 式，如 `hard_limit_usd`） */
+  totalPath: string | null
+  /** 已用额度取值路径（如 `total_usage`） */
+  usedPath: string | null
+  /** 直接余额取值路径（服务端直接返回余额字段时使用） */
+  balancePath: string | null
+  /** 单位除数：默认 1；one-api 的 `total_usage` 以美分计时为 100 */
+  unitDivisor: number
+}
+
+/**
+ * 一条被管理的 Key（**不含明文**）。
+ * 对应 Rust 结构体：`key_butler::models::KeyEntry`
+ */
+export interface KeyEntry {
+  /** 唯一 id（uuid v4） */
+  id: string
+  /** 脱敏展示串，格式 `sk-ab***cdef`（前 5 后 4） */
+  maskedKey: string
+  /** 平台标识：anthropic / openai / groq / google / xai / huggingface / replicate / unknown */
+  platform: string
+  /** 用户备注 */
+  note: string
+  /** 导入时间（Unix 毫秒） */
+  createdAt: number
+  /** 最近一次检测完成时间（Unix 毫秒）；`null` = 从未检测 */
+  lastCheckedAt: number | null
+  /** 四态状态 */
+  status: KeyStatus
+  /** Key 是否有效；`null` = 未能判定。`status==='error' && keyValid===true` 表示「Key 有效但余额查询失败」 */
+  keyValid: boolean | null
+  /** 余额数值；`null` = 未知 */
+  balance: number | null
+  /** 余额是否可信 */
+  balanceKnown: boolean
+  /** 币种（如 USD / CNY）；取不到为 `null` */
+  currency: string | null
+  /** 错误分类（复用探测模块的 9 类字符串值）；无错误为 `null` */
+  errorCategory: string | null
+  /** 该 Key 使用的余额接口适配器 */
+  balanceEndpoint: BalanceEndpointKind
+  /** 自定义余额接口配置（`balanceEndpoint === 'custom'` 时生效） */
+  customEndpoint: BalanceEndpoint | null
+  /** 该 Key 的 Base URL（有效性检测与余额查询都需要）；`null` = 未设置 */
+  baseUrl: string | null
+}
+
+/**
+ * 一条余额快照。**不含 Key 明文**，可明文落盘。
+ * 对应 Rust 结构体：`key_butler::models::Snapshot`
+ */
+export interface Snapshot {
+  /** 关联的 Key id */
+  keyId: string
+  /** 快照时间（Unix 毫秒） */
+  ts: number
+  /** 当时的余额；`null` = 未知 */
+  balance: number | null
+  /** 当时的状态字符串（`KeyStatus` 的序列化值） */
+  status: string
+}
+
+/**
+ * `key_butler_import` 的返回。
+ * 对应 Rust 结构体：`key_butler::models::KeyImportResult`
+ */
+export interface KeyImportResult {
+  /** 导入后的全量脱敏列表 */
+  entries: KeyEntry[]
+  /** 本次新增条数 */
+  added: number
+  /** 因重复被跳过的条数 */
+  duplicates: number
+  /** 文本里没能识别成 Key 的行数 */
+  ignored: number
+}
+
+/**
+ * `key_butler_check` 的入参。
+ * 对应 Rust 结构体：`key_butler::models::KeyCheckRequest`
+ */
+export interface KeyCheckRequest {
+  /** 要检测的 Key id；空数组 = 全部 */
+  ids: string[]
+  /** 并发数（1-10，后端 clamp） */
+  concurrency?: number | null
+  /** 单请求超时（秒，5-300，后端 clamp） */
+  timeoutSecs?: number | null
+  /** 余额不足阈值：余额 ≤ 该值判为 `insufficient` */
+  lowBalanceThreshold?: number | null
+}
+
+/**
+ * `key_butler_check` 的返回：整批检测汇总。
+ * 对应 Rust 结构体：`key_butler::models::KeyCheckSummary`
+ */
+export interface KeyCheckSummary {
+  /** 本次运行 id（Unix 毫秒字符串） */
+  runId: string
+  /** 实际检测条数 */
+  checked: number
+  /** 四态计数 */
+  active: number
+  insufficient: number
+  invalid: number
+  error: number
+  /** 总耗时（毫秒） */
+  elapsedMs: number
+}
+
+/**
+ * 加密保存（vault）状态。
+ * 对应 Rust 结构体：`key_butler::models::VaultStatus`
+ */
+export interface VaultStatus {
+  /** 磁盘上是否已存在密文库（此前启用过） */
+  enabled: boolean
+  /** 当前会话是否已解锁 */
+  unlocked: boolean
+  /** 当前内存中的 Key 条数 */
+  entryCount: number
+}
+
+/**
+ * `key_butler_set_config` 的入参。
+ * 对应 Rust 结构体：`key_butler::models::KeyConfigPatch`
+ */
+export interface KeyConfigPatch {
+  /** 新的 Base URL；`undefined` 表示不改，`null` 表示清空 */
+  baseUrl?: string | null
+  /** 新的余额接口适配器 */
+  balanceEndpoint?: BalanceEndpointKind
+  /** 新的自定义余额接口配置 */
+  customEndpoint?: BalanceEndpoint | null
+}
+
+/**
+ * 事件 `key-butler://progress` 的 payload。
+ * 对应 Rust 结构体：`key_butler::models::KeyCheckProgress`
+ */
+export interface KeyCheckProgress {
+  runId: string
+  keyId: string
+  maskedKey: string
+  stage: CheckStage
+  stageLabel: string
+  completed: number
+  total: number
+  percent: number
+}
+
+/**
+ * 事件 `key-butler://entry-done` 的 payload。
+ * 对应 Rust 结构体：`key_butler::models::KeyCheckEntryDone`
+ */
+export interface KeyCheckEntryDone {
+  runId: string
+  entry: KeyEntry
+  completed: number
+  total: number
+}
+
+/**
+ * 事件 `key-butler://finished` 的 payload。
+ * 对应 Rust 结构体：`key_butler::models::KeyCheckFinished`
+ */
+export interface KeyCheckFinished {
+  runId: string
+  status: string
+  checked: number
+  total: number
+  elapsedMs: number
+  summary: KeyCheckSummary
+}

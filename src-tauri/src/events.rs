@@ -22,3 +22,19 @@ pub const EVENT_FINISHED: &str = "probe://finished";
 
 /// 致命错误事件（导致整轮任务终止）
 pub const EVENT_ERROR: &str = "probe://error";
+
+/* ---------------------------------------------------------------------------
+ * Key 管家（Beta）
+ * ---------------------------------------------------------------------------
+ * 命名沿用 `probe://` 的「命名空间://事件」风格，换成 `key-butler://`。
+ * 与前端 `EVENT_NAMES.KEY_BUTLER_*` 逐字一致。
+ */
+
+/// 批量检测进度（逐 key、逐阶段）
+pub const EVENT_KEY_BUTLER_PROGRESS: &str = "key-butler://progress";
+
+/// 单条 Key 检测完成
+pub const EVENT_KEY_BUTLER_ENTRY_DONE: &str = "key-butler://entry-done";
+
+/// 整批检测结束（done / cancelled / failed）
+pub const EVENT_KEY_BUTLER_FINISHED: &str = "key-butler://finished";

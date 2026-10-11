@@ -1,0 +1,57 @@
+[
+  {
+    "prefix": "sk-ant-",
+    "platform": "anthropic",
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://api.anthropic.com/v1"
+  },
+  {
+    "prefix": "sk-proj-",
+    "platform": "openai",
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://api.openai.com/v1"
+  },
+  {
+    "prefix": "sk-svcacct-",
+    "platform": "openai",
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://api.openai.com/v1"
+  },
+  {
+    "prefix": "gsk_",
+    "platform": "groq",
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://api.groq.com/openai/v1"
+  },
+  {
+    "prefix": "AIza",
+    "platform": "google",
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://generativelanguage.googleapis.com/v1beta/openai"
+  },
+  {
+    "prefix": "xai-",
+    "platform": "xai",
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://api.x.ai/v1"
+  },
+  {
+    "prefix": "hf_",
+    "platform": "huggingface",
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://router.huggingface.co/v1"
+  },
+  {
+    "prefix": "r8_",
+    "platform": "replicate",
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": null
+  },
+  {
+    "prefix": "sk-",
+    "platform": "unknown",
+    "balanceEndpoint": "builtin-oneapi",
+    "defaultBaseUrl": null,
+    "note": "通用 OpenAI 兼容/中转"
+  }
+]

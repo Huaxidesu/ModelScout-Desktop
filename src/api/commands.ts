@@ -20,6 +20,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { COMMAND_NAMES } from '@/types/contracts'
 import type {
+  KeyCheckRequest,
+  KeyCheckSummary,
+  KeyConfigPatch,
+  KeyEntry,
+  KeyImportResult,
   ModelListResult,
   PingResult,
   ProbeConfig,
@@ -28,6 +33,8 @@ import type {
   ProbeErrorKind,
   SaveConfigRequest,
   SaveConfigResult,
+  Snapshot,
+  VaultStatus,
 } from '@/types/contracts'
 
 /* ---------------------------------------------------------------------------
@@ -194,4 +201,92 @@ export function saveConfigFile(request: SaveConfigRequest): Promise<SaveConfigRe
  */
 export function getDictionaryInfo(): Promise<{ entryCount: number }> {
   return call<{ entryCount: number }>('get_dictionary_info')
+}
+
+/* ---------------------------------------------------------------------------
+ * Key 管家（Beta）—— 13 个命令
+ * ---------------------------------------------------------------------------
+ * 与探测模块共用同一个 `call<T>()` 出口，因此错误同样是规约后的
+ * `ProbeApiError`，组件层可以用同一套 `instanceof` 判断处理。
+ *
+ * 命名沿用文件里既有的 `动词+名词` 风格；命令名一律取自 `COMMAND_NAMES`，
+ * 不允许在调用点写字面量。
+ * ------------------------------------------------------------------------- */
+
+/**
+ * 批量文本 → 提取 Key → 前缀识别 → 入列（去重）。
+ *
+ * 提取在**后端**完成（与 `utils/parseConnection.ts` 同一套正则思路），
+ * 前端只负责把整段文本原样传过去。
+ */
+export function keyButlerImport(text: string): Promise<KeyImportResult> {
+  return call<KeyImportResult>(COMMAND_NAMES.KEY_BUTLER_IMPORT, { text })
+}
+
+/**
+ * 单/批量检测。
+ *
+ * 会挂起到整批检测结束；期间进度与逐条结果通过 3 个 `key-butler://*` 事件推送。
+ */
+export function keyButlerCheck(request: KeyCheckRequest): Promise<KeyCheckSummary> {
+  return call<KeyCheckSummary>(COMMAND_NAMES.KEY_BUTLER_CHECK, { request })
+}
+
+/** 请求中止当前批量检测（协作式，返回中止那一刻的汇总）。 */
+export function keyButlerCheckCancel(): Promise<KeyCheckSummary> {
+  return call<KeyCheckSummary>(COMMAND_NAMES.KEY_BUTLER_CHECK_CANCEL)
+}
+
+/** 返回脱敏列表（`KeyEntry` 不含明文）。 */
+export function keyButlerList(): Promise<KeyEntry[]> {
+  return call<KeyEntry[]>(COMMAND_NAMES.KEY_BUTLER_LIST)
+}
+
+/**
+ * 返回单个完整 Key —— **仅供一键复制**。
+ *
+ * 调用方拿到后应立即复制并把变量置空，不要存进 store 或写进日志。
+ */
+export function keyButlerReveal(id: string): Promise<string> {
+  return call<string>(COMMAND_NAMES.KEY_BUTLER_REVEAL, { id })
+}
+
+/** 删除一条 Key（连同它的余额快照），返回删除后的全量列表。 */
+export function keyButlerDelete(id: string): Promise<KeyEntry[]> {
+  return call<KeyEntry[]>(COMMAND_NAMES.KEY_BUTLER_DELETE, { id })
+}
+
+/** 修改备注，返回更新后的全量列表。 */
+export function keyButlerUpdateNote(id: string, note: string): Promise<KeyEntry[]> {
+  return call<KeyEntry[]>(COMMAND_NAMES.KEY_BUTLER_UPDATE_NOTE, { id, note })
+}
+
+/** 修改 Base URL 与余额接口配置，返回更新后的全量列表。 */
+export function keyButlerSetConfig(id: string, patch: KeyConfigPatch): Promise<KeyEntry[]> {
+  return call<KeyEntry[]>(COMMAND_NAMES.KEY_BUTLER_SET_CONFIG, { id, patch })
+}
+
+/** 启用加密保存（设置主密码并加密当前列表）。 */
+export function keyButlerVaultEnable(password: string): Promise<VaultStatus> {
+  return call<VaultStatus>(COMMAND_NAMES.KEY_BUTLER_VAULT_ENABLE, { password })
+}
+
+/** 用主密码解锁已有密文库。 */
+export function keyButlerVaultUnlock(password: string): Promise<VaultStatus> {
+  return call<VaultStatus>(COMMAND_NAMES.KEY_BUTLER_VAULT_UNLOCK, { password })
+}
+
+/** 关闭加密保存（删除本地密文，内存表保留）。 */
+export function keyButlerVaultDisable(): Promise<VaultStatus> {
+  return call<VaultStatus>(COMMAND_NAMES.KEY_BUTLER_VAULT_DISABLE)
+}
+
+/** 查询加密保存状态（是否已启用 / 当前是否已解锁）。 */
+export function keyButlerVaultStatus(): Promise<VaultStatus> {
+  return call<VaultStatus>(COMMAND_NAMES.KEY_BUTLER_VAULT_STATUS)
+}
+
+/** 查询某条 Key 的余额快照序列（按时间升序）。 */
+export function keyButlerSnapshots(keyId: string): Promise<Snapshot[]> {
+  return call<Snapshot[]>(COMMAND_NAMES.KEY_BUTLER_SNAPSHOTS, { keyId })
 }

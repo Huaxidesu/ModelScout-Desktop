@@ -39,7 +39,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/model_params.json"],
+    "resources": ["resources/model_params.json", "resources/platform_prefixes.json"],
     "copyright": "Copyright (c) 2026 Huaxidesu. PolyForm Noncommercial 1.0.0 (Noncommercial use only).",
     "license": "PolyForm-Noncommercial-1.0.0",
     "licenseFile": "../LICENSE",

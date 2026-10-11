@@ -4,7 +4,7 @@ name = "modelscout"
 #   - tauri.conf.json 的 "version": "../package.json" 会在构建/打包时读取它并覆盖此处的值；
 #   - 这里仅作为 crate 元数据（cargo 语法必需），升级版本号时请只改 package.json，
 #     并在发布前运行 `cargo build` 让 Cargo.lock 自动同步此字段。
-version = "0.1.1"
+version = "0.2.0-beta.1"
 description = "ModelScout —— 大模型 API 探测与配置生成桌面应用"
 authors = ["Huaxidesu"]
 # PolyForm Noncommercial 1.0.0：允许非商业用途下的使用、修改与分发。
@@ -55,6 +55,20 @@ regex = "1.13.1"
 
 # ---- 惰性静态初始化（内置参数字典） ----
 once_cell = "1.21.4"
+
+# ---- Key 管家（Beta）专用 ----
+# 密码派生：argon2id（OWASP 推荐参数 m=19456, t=2, p=1）
+argon2 = "0.5"
+# 对称加密：AES-256-GCM（nonce 每次随机新生成）
+aes-gcm = "0.10"
+# 唯一 id（Key 条目标识）
+uuid = { version = "1", features = ["v4"] }
+# 密文/盐/nonce 的文本化（JSON 里存 base64 而不是字节数组）
+base64 = "0.21"
+# 随机数（盐 16 字节、GCM nonce 12 字节）
+getrandom = "0.2"
+# 主密码与派生密钥用后清零
+zeroize = "1.9"
 
 # ---- 错误类型 ----
 thiserror = "2.0"

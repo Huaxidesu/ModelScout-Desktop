@@ -21,6 +21,7 @@ import {
   NConfigProvider,
   NMessageProvider,
   NDialogProvider,
+  NTag,
   darkTheme,
   zhCN,
   dateZhCN,
@@ -34,6 +35,7 @@ import ProbeControl from '@/components/ProbeControl.vue'
 import ProgressPanel from '@/components/ProgressPanel.vue'
 import ModelTable from '@/components/ModelTable.vue'
 import ConfigPreview from '@/components/ConfigPreview.vue'
+import KeyButlerView from '@/views/keyButler/KeyButlerView.vue'
 import { useProbe } from '@/composables/useProbe'
 
 /* ---------------------------------------------------------------------------
@@ -134,6 +136,21 @@ const showConfig = ref(false)
 /** 「关于」弹窗是否显示（由 AppHeader 的入口触发） */
 const showAbout = ref(false)
 
+/* ---------------------------------------------------------------------------
+ * 顶部 Tab：探测 / Key 管家（Beta）
+ * ---------------------------------------------------------------------------
+ * 用 `v-show` 而不是 `v-if` 切换：探测页内部有大量组件（进度面板、结果表、
+ * 配置预览），`v-if` 会在每次切 Tab 时把它们整个卸载重建，
+ * 既丢滚动位置也丢展开态。`v-show` 只是切换 display。
+ */
+const activeTab = ref<'probe' | 'keyButler'>('probe')
+
+/** Tab 定义（beta 为 true 时在文案后挂一个 Beta 徽标） */
+const TABS = [
+  { value: 'probe' as const, label: '探测', beta: false },
+  { value: 'keyButler' as const, label: 'Key 管家', beta: true },
+]
+
 /**
  * 配置预览是否放大到全屏。
  *
@@ -227,8 +244,44 @@ const statusLabel = computed(
             @open-about="showAbout = true"
           />
 
-          <!-- ============ 主体：三段式纵向布局 ============ -->
-          <div class="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3">
+          <!-- ============ 页面 Tab ============ -->
+          <nav
+            class="flex shrink-0 items-center gap-5 border-b border-ms-border bg-ms-panel px-4"
+          >
+            <button
+              v-for="tab in TABS"
+              :key="tab.value"
+              type="button"
+              class="relative flex items-center gap-1.5 py-2 text-[13px] transition-colors"
+              :class="
+                activeTab === tab.value
+                  ? 'text-ms-accent'
+                  : 'text-ms-text-dim hover:text-ms-text'
+              "
+              @click="activeTab = tab.value"
+            >
+              <span>{{ tab.label }}</span>
+              <!-- Beta 徽标：warning 色 + 圆角，与文案间距 6px（gap-1.5） -->
+              <NTag v-if="tab.beta" size="small" round type="warning" :bordered="false">
+                Beta
+              </NTag>
+              <span
+                v-if="activeTab === tab.value"
+                class="absolute inset-x-0 -bottom-px h-0.5 bg-ms-accent"
+              />
+            </button>
+          </nav>
+
+          <!-- ============ 主体：探测页 ============ -->
+          <!--
+            用 v-show 而不是 v-if：见脚本里 activeTab 的注释。
+            注意这里保留原有的三段式布局结构，只是把最外层从「唯一主体」
+            变成「探测 Tab 的内容」。
+          -->
+          <div
+            v-show="activeTab === 'probe'"
+            class="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3"
+          >
             <!-- ------ 第一段：输入区 ------ -->
             <ConnectionForm class="shrink-0" :probe="probe" />
 
@@ -282,8 +335,17 @@ const statusLabel = computed(
             </div>
           </div>
 
-          <!-- ============ 状态栏 ============ -->
+          <!-- ============ 主体：Key 管家（Beta） ============ -->
+          <!--
+            同样是 v-show：Key 管家的列表、过滤条件、抽屉展开态都值得在
+            来回切 Tab 时保留。它自带底部状态汇总条，因此下面那个全局
+            状态栏只属于探测页。
+          -->
+          <KeyButlerView v-show="activeTab === 'keyButler'" />
+
+          <!-- ============ 状态栏（仅探测页） ============ -->
           <footer
+            v-show="activeTab === 'probe'"
             class="flex shrink-0 items-center justify-between border-t border-ms-border bg-ms-panel px-4 py-1.5 text-[11px] text-ms-text-faint"
           >
             <div class="flex items-center gap-3">
