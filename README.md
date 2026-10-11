@@ -1,14 +1,21 @@
-# ModelScout
-
-大语言模型 API 能力探测与配置生成工具。
+<div align="center">
+  <img src="assets/images/logo-render.png" width="120" alt="ModelScout">
+  <h1>ModelScout</h1>
+  <p>大语言模型 API 能力探测与配置生成工具</p>
+</div>
 
 支持连接 OpenAI 兼容的 API 服务，批量检测模型的工具调用、图片输入、推理能力及 Token 限制，并根据探测结果生成 OpenCode、DeepSeekHardness 配置文件。
 
-[![Download](https://img.shields.io/badge/下载-最新版本-14b8a6?style=for-the-badge)](../../releases/latest)
-[![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB)](https://tauri.app/)
-[![Vue](https://img.shields.io/badge/Vue-3.5-42B883)](https://vuejs.org/)
-[![Rust](https://img.shields.io/badge/Rust-1.85%2B-000000)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-lightgrey.svg)](LICENSE)
+<p align="center">
+  <a href="../../releases/latest"><img src="https://img.shields.io/badge/下载-最新版本-14b8a6?style=for-the-badge" alt="下载最新版本"></a>
+</p>
+
+<p align="center">
+  <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri-2.x-24C8DB" alt="Tauri"></a>
+  <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3.5-42B883" alt="Vue"></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.85%2B-000000" alt="Rust"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-lightgrey.svg" alt="License"></a>
+</p>
 
 ## 项目简介
 
@@ -60,7 +67,9 @@ chmod +x ModelScout_*.AppImage
 
 支持通过「从文本识别」功能，从包含连接信息的文本中提取 API 地址及密钥，包括服务商提供的配置示例或已有配置文件。
 
-![从文本识别连接信息](assets/images/connection-text.png)
+<p align="center">
+  <img src="assets/images/connection-text.png" width="620" alt="从文本识别连接信息">
+</p>
 
 ### 2. 执行模型探测
 
@@ -70,7 +79,9 @@ chmod +x ModelScout_*.AppImage
 
 默认并发数为 3，可根据 API 服务的速率限制进行调整。遇到 HTTP 429 错误时，建议将并发数降低至 1–2。
 
-![模型探测结果](assets/images/probe-results.png)
+<p align="center">
+  <img src="assets/images/probe-results.png" width="620" alt="模型探测结果">
+</p>
 
 ### 3. 生成配置文件
 
@@ -85,7 +96,9 @@ chmod +x ModelScout_*.AppImage
 
 对于未能自动识别的参数，可双击结果表格中的对应字段进行编辑。
 
-![配置预览与复制](assets/images/config-preview.png)
+<p align="center">
+  <img src="assets/images/config-preview.png" width="620" alt="配置预览与复制">
+</p>
 
 ## 探测能力
 
