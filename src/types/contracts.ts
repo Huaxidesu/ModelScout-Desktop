@@ -90,6 +90,20 @@ export type ProbeStage =
   | 'done'
   | 'failed'
 
+/**
+ * API Key 的来源方式。
+ * 与 Rust 端 `models::ApiKeySource` 枚举一一对应。
+ *
+ * - `plain`      : 直接使用 `apiKey` 字段的明文（默认，兼容旧行为）
+ * - `env`        : 从 `apiKeyEnvVar` 指定的环境变量读取（由**后端**读取）
+ * - `credential` : 从 `apiKeyCredential` 指定的 Windows 凭据管理器通用凭据读取
+ *                  （由**后端**读取）
+ *
+ * 后两种方式下 `apiKey` 应留空 —— 明文由后端在发起请求前解析，
+ * 前端自始至终不接触它。
+ */
+export type ApiKeySource = 'plain' | 'env' | 'credential'
+
 /* ---------------------------------------------------------------------------
  * 二、命令入参 / 出参结构体
  * ------------------------------------------------------------------------- */
@@ -100,6 +114,10 @@ export type ProbeStage =
  *
  * 注意：`apiKey` 只在 invoke 时向前端 → Rust 单向传递，
  * Rust 端持有它但**绝不**在任何 log / 事件 payload 中回传或打印。
+ *
+ * 密钥来源：`apiKeySource` 为 `plain` 时用 `apiKey`；
+ * 为 `env` / `credential` 时改用 `apiKeyEnvVar` / `apiKeyCredential`，
+ * 由后端读取真正的明文（前端不接触）。
  */
 export interface ProbeConfig {
   /** API 根地址，例如 `https://api.openai.com/v1`（末尾斜杠会被规范化去除） */
@@ -120,6 +138,12 @@ export interface ProbeConfig {
    * 为空数组（或 undefined）表示探测 `/models` 返回的全部模型。
    */
   onlyModels?: string[]
+  /** API Key 的来源方式，默认 `plain` */
+  apiKeySource: ApiKeySource
+  /** 当 `apiKeySource = 'env'` 时要读取的环境变量名 */
+  apiKeyEnvVar: string
+  /** 当 `apiKeySource = 'credential'` 时要读取的 Windows 凭据名 */
+  apiKeyCredential: string
 }
 
 /**

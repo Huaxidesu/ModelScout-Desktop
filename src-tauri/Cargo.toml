@@ -73,6 +73,9 @@ windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
+    # 读取 Windows 凭据管理器的通用凭据（CredReadW / CredFree），
+    # 供「API Key 从凭据管理器读取」这一可选功能使用（见 src/credential.rs）。
+    "Win32_Security_Credentials",
 ] }
 
 [features]

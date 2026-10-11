@@ -174,11 +174,9 @@ export function useProbe() {
     pinging.value = true
     pingResult.value = null
     try {
-      const result = await pingConnection(
-        store.config.baseUrl,
-        store.config.apiKey,
-        store.config.timeoutSecs,
-      )
+      // 直接传整个配置：密钥来源（明文 / 环境变量 / 凭据管理器）
+      // 由后端统一解析，保证「测试连接」与「开始探测」走同一条取密钥路径。
+      const result = await pingConnection(store.config)
       pingResult.value = result
       if (result.ok) {
         message.success(`连接正常，发现 ${result.modelCount} 个模型。`)
@@ -317,14 +315,34 @@ export function useProbe() {
 
   /** 校验配置；不合法时弹出提示并返回 true。 */
   function configInvalid(): boolean {
-    if (!store.config.baseUrl.trim()) {
+    const cfg = store.config
+
+    if (!cfg.baseUrl.trim()) {
       message.error('请填写 Base URL。')
       return true
     }
-    if (!store.config.apiKey.trim()) {
-      message.error('请填写 API Key。')
-      return true
+
+    // 密钥按来源校验：明文要求 Key 非空，另两种来源要求「名字」非空。
+    switch (cfg.apiKeySource) {
+      case 'env':
+        if (!cfg.apiKeyEnvVar.trim()) {
+          message.error('请填写 API Key 所在的环境变量名。')
+          return true
+        }
+        break
+      case 'credential':
+        if (!cfg.apiKeyCredential.trim()) {
+          message.error('请填写 Windows 凭据管理器中的凭据名。')
+          return true
+        }
+        break
+      default:
+        if (!cfg.apiKey.trim()) {
+          message.error('请填写 API Key。')
+          return true
+        }
     }
+
     return false
   }
 

@@ -21,6 +21,7 @@
 
 // 全部业务模块
 pub mod commands; // Tauri 命令层
+pub mod credential; // 从 Windows 凭据管理器读取 API Key（跨平台签名，非 Windows 返回错误）
 pub mod dictionary; // 本地模型参数字典
 pub mod error; // 错误分类与脱敏
 pub mod events; // 事件名常量

@@ -10,8 +10,10 @@
  *   3. 提供「获取模型列表」按钮，并允许用户从中挑选要探测的模型
  *
  * 【安全提示】
- * API Key 使用 type="password" 输入框，并提供「显示/隐藏」切换。
- * Key 只保存在前端内存（Pinia store）中，不写 localStorage、不写文件。
+ * API Key 支持三种来源：明文输入（type="password"，默认遮蔽，右侧常驻小眼睛可切换）、
+ * 环境变量（只填变量名，由后端读取）、Windows 凭据管理器（只填凭据名，由后端读取）。
+ * 无论哪种方式，Key 都只保存在前端内存（Pinia store）中，不写 localStorage、不写文件；
+ * 非明文模式下明文甚至不会经过前端渲染层。
  * ============================================================================
  */
 
@@ -36,6 +38,7 @@ import {
 
 import { useProbe } from '@/composables/useProbe'
 import { extractConnection, maskSecret, type ExtractResult } from '@/utils/parseConnection'
+import type { ApiKeySource } from '@/types/contracts'
 
 const props = defineProps<{
   /** 由 App.vue 传入的探测组合式对象 */
@@ -55,6 +58,27 @@ const pickedIds = ref<string[]>([])
 
 /** 当前是否禁用输入（探测中不允许改配置） */
 const disabled = computed(() => props.probe.store.isRunning)
+
+/* ---------------------------------------------------------------------------
+ * 密钥来源
+ * ---------------------------------------------------------------------------
+ * 允许三种提供方式，均只把「明文」交给后端，前端界面在非明文模式下
+ * 完全不接触密钥内容。真正的读取动作在后端 `ProbeConfig::resolve_api_key()`。
+ */
+const KEY_SOURCE_OPTIONS = [
+  { label: '明文', value: 'plain' },
+  { label: '环境变量', value: 'env' },
+  { label: '凭据管理器', value: 'credential' },
+]
+
+/** 当前密钥来源（用于模板分支） */
+const keySource = computed<ApiKeySource>(() => props.probe.store.config.apiKeySource)
+
+/** 切换密钥来源 */
+function onKeySourceChange(value: string | number | null): void {
+  if (typeof value !== 'string') return
+  props.probe.store.config.apiKeySource = value as ApiKeySource
+}
 
 /* ---------------------------------------------------------------------------
  * 常用端点预设
@@ -155,6 +179,9 @@ function runRecognize(notify = true): void {
   }
   if (result.apiKey) {
     props.probe.store.config.apiKey = result.apiKey
+    // 识别到的是明文密钥：把来源切回「明文」。
+    // 否则用户处在「环境变量 / 凭据管理器」模式时，会以为填了却根本没生效。
+    props.probe.store.config.apiKeySource = 'plain'
     filled.push('API Key')
   }
 
@@ -221,16 +248,119 @@ function clearRecognize(): void {
 
       <!-- ---------- API Key ---------- -->
       <div class="col-span-4">
-        <label class="mb-1 block text-[11px] text-ms-text-dim">API Key</label>
-        <NInput
-          v-model:value="probe.store.config.apiKey"
-          :type="revealKey ? 'text' : 'password'"
-          :disabled="disabled"
-          show-password-on="click"
-          placeholder="sk-..."
-          clearable
-          @click="revealKey = !revealKey"
-        />
+        <label class="mb-1 flex items-center gap-1 text-[11px] text-ms-text-dim">
+          API Key
+          <NTooltip trigger="hover" style="max-width: 320px">
+            <template #trigger>
+              <span class="cursor-help text-ms-text-faint">ⓘ</span>
+            </template>
+            三种提供方式：<br />
+            1. 明文 —— 直接粘贴 Key；<br />
+            2. 环境变量 —— 只填变量名，后端读取该变量的值；<br />
+            3. 凭据管理器 —— 只填凭据名，后端从 Windows 凭据管理器读取。<br />
+            后两种方式下明文不会出现在界面上，也不会写入磁盘。
+          </NTooltip>
+        </label>
+
+        <NInputGroup>
+          <!-- 密钥来源：明文 / 环境变量 / Windows 凭据管理器 -->
+          <NSelect
+            :value="probe.store.config.apiKeySource"
+            :options="KEY_SOURCE_OPTIONS"
+            :disabled="disabled"
+            style="width: 112px"
+            @update:value="onKeySourceChange"
+          />
+
+          <!--
+            明文输入：
+              默认 type=password，内容以圆点（星号）遮蔽。
+              小眼睛图标用自定义 suffix 实现，**常驻显示**（不随内容有无、聚焦与否、
+              当前是否明文而变化）。此前用 Naive 的 show-password-on 存在两个问题：
+                1. 明文态下 type 变为 text，Naive 自带的图标会消失，无法「常驻」；
+                2. 把 @click 挂在 NInput 上会导致「点输入框任意位置都切换明文」。
+              自定义 suffix 只把切换绑定在按钮本身，行为可控。
+          -->
+          <NInput
+            v-if="keySource === 'plain'"
+            v-model:value="probe.store.config.apiKey"
+            :type="revealKey ? 'text' : 'password'"
+            :disabled="disabled"
+            placeholder="sk-..."
+            clearable
+          >
+            <template #suffix>
+              <button
+                type="button"
+                class="ms-eye-toggle"
+                :aria-label="revealKey ? '隐藏 API Key' : '显示 API Key'"
+                :title="revealKey ? '隐藏' : '显示'"
+                :disabled="disabled"
+                @click="revealKey = !revealKey"
+              >
+                <!-- 明文态：显示「眼睛划掉」图标，点击可隐藏 -->
+                <svg
+                  v-if="revealKey"
+                  viewBox="0 0 24 24"
+                  width="15"
+                  height="15"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                </svg>
+                <!-- 遮蔽态：显示「眼睛」图标，点击可显示 -->
+                <svg
+                  v-else
+                  viewBox="0 0 24 24"
+                  width="15"
+                  height="15"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </button>
+            </template>
+          </NInput>
+
+          <!-- 环境变量名：后端读取该变量的值作为 Key -->
+          <NInput
+            v-else-if="keySource === 'env'"
+            v-model:value="probe.store.config.apiKeyEnvVar"
+            :disabled="disabled"
+            placeholder="OPENAI_API_KEY"
+            clearable
+          />
+
+          <!-- 凭据名：后端从 Windows 凭据管理器读取 -->
+          <NInput
+            v-else
+            v-model:value="probe.store.config.apiKeyCredential"
+            :disabled="disabled"
+            placeholder="凭据名称"
+            clearable
+          />
+        </NInputGroup>
+
+        <!-- 非明文来源的说明：明确「明文不会经过本界面」 -->
+        <div v-if="keySource !== 'plain'" class="mt-1 text-[10px] leading-relaxed text-ms-text-faint">
+          {{
+            keySource === 'env'
+              ? '由后端读取该环境变量的值；请先在系统中配置好它。'
+              : '由后端从「凭据管理器 → Windows 凭据」的通用凭据中读取。'
+          }}
+        </div>
       </div>
 
       <!-- ---------- 并发数 ---------- -->

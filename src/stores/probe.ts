@@ -50,6 +50,10 @@ export function defaultConfig(): ProbeConfig {
     timeoutSecs: 30, // 任务书第五节要求：30s 超时
     probeLimits: true,
     onlyModels: [],
+    // 密钥默认走明文输入（与引入「环境变量 / 凭据管理器」来源之前行为一致）
+    apiKeySource: 'plain',
+    apiKeyEnvVar: '',
+    apiKeyCredential: '',
   }
 }
 

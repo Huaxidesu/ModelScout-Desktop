@@ -111,6 +111,11 @@ pub async fn list_models(
 ) -> Result<crate::models::ModelListResult, CommandError> {
     let config = config.normalized();
     config.validate().map_err(CommandError::invalid_input)?;
+    // 把「环境变量 / 凭据管理器」来源解析为明文 Key（明文来源则原样返回）。
+    // 解析失败（变量未设置、凭据不存在等）按参数问题归类，提示用户修正。
+    let config = config
+        .with_resolved_key()
+        .map_err(CommandError::invalid_input)?;
 
     let client = ApiClient::new(&config).map_err(|err| CommandError::from_probe(&err))?;
 
@@ -135,50 +140,59 @@ pub async fn list_models(
  * 2. ping_connection —— 连通性 + 鉴权预检
  * ========================================================================= */
 
+/// 构造一个「预检失败」的 `PingResult`。
+///
+/// 预检命令的契约是**永不返回 Err**：无论参数不合法、密钥无法解析还是
+/// 网络/鉴权失败，都封装成 `PingResult.error` 交给前端渲染诊断卡片。
+fn ping_failure(message: impl Into<String>, resolved_url: String) -> PingResult {
+    PingResult {
+        ok: false,
+        http_status: 0,
+        error: Some(ProbeError::new(
+            ProbeErrorKind::Unknown,
+            message,
+            0,
+            ProbeStage::Listing,
+        )),
+        elapsed_ms: 0,
+        model_count: 0,
+        resolved_url,
+    }
+}
+
 /// 连通性与鉴权预检。
 ///
 /// 【与 list_models 的区别】
-/// 本命令**永不返回 Err**：所有失败都被归类塞进 `PingResult.error`，
+/// 本命令**永不返回 Err**：所有失败（参数不合法、密钥来源无法解析、
+/// 网络或鉴权失败）都被归类塞进 `PingResult.error`，
 /// 让前端可以直接渲染一个「诊断卡片」，而不需要走 catch 分支。
 ///
 /// # 参数
-/// - `baseUrl`: API 根地址
-/// - `apiKey`: API Key
-/// - `timeoutSecs`: 超时秒数（可选，默认 30）
+/// - `config`: 探测配置。本命令只用到 `baseUrl`、密钥（明文或其来源）
+///   与 `timeoutSecs`；并发数与上限探测开关会被强制覆盖为
+///   「单并发、不跑上限探测」。
 #[tauri::command]
-pub async fn ping_connection(
-    base_url: String,
-    api_key: String,
-    timeout_secs: Option<u64>,
-) -> Result<PingResult, CommandError> {
+pub async fn ping_connection(config: ProbeConfig) -> Result<PingResult, CommandError> {
+    // 预检固定单并发、不跑上限探测，其余字段沿用调用方传入的配置
     let config = ProbeConfig {
-        base_url,
-        api_key,
         concurrency: 1,
-        timeout_secs: timeout_secs.unwrap_or(30),
         probe_limits: false,
-        only_models: Vec::new(),
-    }
-    .normalized();
+        ..config.normalized()
+    };
+
+    let resolved_url = config.base_url.clone();
 
     // 参数校验失败也走 PingResult 而非 Err —— 保持「预检命令不抛错」的契约
     if let Err(message) = config.validate() {
-        return Ok(PingResult {
-            ok: false,
-            http_status: 0,
-            error: Some(ProbeError::new(
-                ProbeErrorKind::Unknown,
-                message,
-                0,
-                ProbeStage::Listing,
-            )),
-            elapsed_ms: 0,
-            model_count: 0,
-            resolved_url: config.base_url.clone(),
-        });
+        return Ok(ping_failure(message, resolved_url));
     }
 
-    let resolved_url = config.base_url.clone();
+    // 密钥来源解析失败（环境变量未设置 / 凭据不存在）同样走 PingResult
+    let config = match config.with_resolved_key() {
+        Ok(resolved) => resolved,
+        Err(message) => return Ok(ping_failure(message, resolved_url)),
+    };
+
     let client = match ApiClient::new(&config) {
         Ok(client) => client,
         Err(err) => {
@@ -241,6 +255,11 @@ pub async fn start_probe(
 ) -> Result<ProbeRunSummary, CommandError> {
     let config = config.normalized();
     config.validate().map_err(CommandError::invalid_input)?;
+    // 解析密钥来源（环境变量 / 凭据管理器 → 明文）。
+    // 放在互斥检查之前：配置本身有问题时应当立刻失败，不占用「已有任务」的判断。
+    let config = config
+        .with_resolved_key()
+        .map_err(CommandError::invalid_input)?;
 
     // ---- 并发互斥：若已有任务在跑，直接拒绝 ----
     {
@@ -508,39 +527,44 @@ pub async fn get_dictionary_info() -> Result<Value, CommandError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::ProbeConfig;
+    use super::ping_failure;
+    use crate::models::{ApiKeySource, ProbeConfig};
+
+    /// 构造一份「明文模式」的测试配置，避免每处字面量都重复三个来源字段。
+    fn plain_config(base_url: &str, api_key: &str) -> ProbeConfig {
+        ProbeConfig {
+            base_url: base_url.to_string(),
+            api_key: api_key.to_string(),
+            concurrency: 3,
+            timeout_secs: 30,
+            probe_limits: true,
+            only_models: vec![],
+            api_key_source: ApiKeySource::Plain,
+            api_key_env_var: String::new(),
+            api_key_credential: String::new(),
+        }
+    }
 
     #[test]
     fn probe_config_validation_rejects_empty_fields() {
-        let empty_url = ProbeConfig {
-            base_url: "   ".to_string(),
-            api_key: "sk-x".to_string(),
-            concurrency: 3,
-            timeout_secs: 30,
-            probe_limits: true,
-            only_models: vec![],
-        };
-        assert!(empty_url.normalized().validate().is_err());
+        assert!(plain_config("   ", "sk-x").normalized().validate().is_err());
+        assert!(plain_config("https://api.example.com/v1", "  ")
+            .normalized()
+            .validate()
+            .is_err());
+        assert!(plain_config("https://api.example.com/v1", "sk-x")
+            .normalized()
+            .validate()
+            .is_ok());
+    }
 
-        let empty_key = ProbeConfig {
-            base_url: "https://api.example.com/v1".to_string(),
-            api_key: "  ".to_string(),
-            concurrency: 3,
-            timeout_secs: 30,
-            probe_limits: true,
-            only_models: vec![],
-        };
-        assert!(empty_key.normalized().validate().is_err());
-
-        let ok = ProbeConfig {
-            base_url: "https://api.example.com/v1".to_string(),
-            api_key: "sk-x".to_string(),
-            concurrency: 3,
-            timeout_secs: 30,
-            probe_limits: true,
-            only_models: vec![],
-        };
-        assert!(ok.normalized().validate().is_ok());
+    #[test]
+    fn ping_failure_never_returns_err_but_carries_message() {
+        // 预检命令契约：失败也必须以 PingResult.error 表达，而不是 Err
+        let result = ping_failure("环境变量 FOO 未设置。".to_string(), "https://x/v1".to_string());
+        assert!(!result.ok);
+        assert_eq!(result.error.as_ref().unwrap().message, "环境变量 FOO 未设置。");
+        assert_eq!(result.resolved_url, "https://x/v1");
     }
 
     #[test]

@@ -243,3 +243,36 @@ body {
   user-select: text;
   -webkit-user-select: text;
 }
+
+/* ---------------------------------------------------------------------------
+ * 表单内联图标按钮
+ * ------------------------------------------------------------------------- */
+
+/*
+ * API Key 的显示/隐藏切换按钮（小眼睛）。
+ *
+ * 放在 NInput 的 suffix 插槽里，因此需要：
+ *   - 去掉按钮默认边框与背景，融进输入框；
+ *   - 常驻显示，不随输入框内容、聚焦状态或明文/遮蔽态变化；
+ *   - 颜色走设计令牌，悬停时高亮为品牌色。
+ */
+.ms-eye-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-ms-text-faint);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.ms-eye-toggle:hover:not(:disabled) {
+  color: var(--color-ms-accent);
+}
+
+.ms-eye-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

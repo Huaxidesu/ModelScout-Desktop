@@ -137,17 +137,13 @@ export function listModels(config: ProbeConfig): Promise<ModelListResult> {
  *
  * 注意：该命令**永不抛错**，失败信息在返回值的 `error` 字段里。
  * 因此这里不 try/catch 成异常，而是原样返回给调用方判断 `ok`。
+ *
+ * 入参与 `start_probe` 一致，直接传整个 `ProbeConfig`：
+ * 密钥来源（明文 / 环境变量 / 凭据管理器）由后端统一解析，
+ * 预检也必须走同一条路径，否则「测试连接」能过、真正探测却拿不到 Key。
  */
-export function pingConnection(
-  baseUrl: string,
-  apiKey: string,
-  timeoutSecs?: number,
-): Promise<PingResult> {
-  return call<PingResult>(COMMAND_NAMES.PING_CONNECTION, {
-    baseUrl,
-    apiKey,
-    timeoutSecs: timeoutSecs ?? null,
-  })
+export function pingConnection(config: ProbeConfig): Promise<PingResult> {
+  return call<PingResult>(COMMAND_NAMES.PING_CONNECTION, { config })
 }
 
 /**

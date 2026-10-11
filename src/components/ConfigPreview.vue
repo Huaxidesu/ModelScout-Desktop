@@ -175,6 +175,48 @@ const maskedKey = computed(() => {
   return `${key.slice(0, 5)}…${key.slice(-4)}`
 })
 
+/**
+ * 连接表单里选择的密钥来源。
+ *
+ * 当它不是 `plain` 时，`apiKey` 字段本来就是空的（明文由后端读取），
+ * 因此不能再按「未填 Key」来提示，否则会误导用户。
+ */
+const keySource = computed(() => props.probe.store.config.apiKeySource)
+
+/** 非明文来源的展示文案；明文来源时为空字符串 */
+const keySourceLabel = computed(() => {
+  const cfg = props.probe.store.config
+  if (cfg.apiKeySource === 'env') {
+    return cfg.apiKeyEnvVar.trim() ? `环境变量 ${cfg.apiKeyEnvVar.trim()}` : '环境变量（未命名）'
+  }
+  if (cfg.apiKeySource === 'credential') {
+    return cfg.apiKeyCredential.trim()
+      ? `凭据「${cfg.apiKeyCredential.trim()}」`
+      : '凭据管理器（未命名）'
+  }
+  return ''
+})
+
+/**
+ * 连接表单切到「环境变量 / 凭据管理器」时，生成配置也应改为环境变量引用 ——
+ * 否则会把空字符串当作 Key 写进配置。env 模式下顺带把变量名带过来，
+ * 让生成的配置与「后端实际读取的变量」保持一致。
+ *
+ * 只做单向同步（非明文 → env 模式），不反向覆盖用户的显式选择。
+ */
+watch(
+  keySource,
+  (source) => {
+    if (source === 'plain') return
+    apiKeyMode.value = 'env'
+    const envName = props.probe.store.config.apiKeyEnvVar.trim()
+    if (source === 'env' && envName) {
+      envVarOverride.value = envName
+    }
+  },
+  { immediate: true },
+)
+
 /* ---------------------------------------------------------------------------
  * 生成上下文
  * ------------------------------------------------------------------------- */
@@ -600,6 +642,14 @@ watch(
           placeholder="DEEPSEEK_LOCAL_API_KEY"
           style="width: 210px"
         />
+        <!-- 密钥来自环境变量 / 凭据管理器：展示来源，不再提示「未填 Key」 -->
+        <NTooltip v-else-if="keySourceLabel" trigger="hover">
+          <template #trigger>
+            <NTag size="tiny" :bordered="false" type="info">{{ keySourceLabel }}</NTag>
+          </template>
+          密钥来自上方连接表单选择的来源（环境变量 / Windows 凭据管理器），由后端读取；
+          此处只控制它以什么形式写进配置。
+        </NTooltip>
         <NTooltip v-else trigger="hover">
           <template #trigger>
             <NTag size="tiny" :bordered="false" :type="keyFilled ? 'success' : 'warning'">

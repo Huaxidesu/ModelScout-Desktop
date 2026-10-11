@@ -234,6 +234,9 @@ fn mock_client(base_url: &str) -> ApiClient {
         timeout_secs: 10,
         probe_limits: true,
         only_models: Vec::new(),
+        api_key_source: modelscout_lib::models::ApiKeySource::Plain,
+        api_key_env_var: String::new(),
+        api_key_credential: String::new(),
     };
     ApiClient::new(&config).expect("ApiClient 构造失败")
 }

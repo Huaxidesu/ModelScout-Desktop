@@ -2168,6 +2168,9 @@ mod tests {
             timeout_secs: 30,
             probe_limits: true,
             only_models: vec![],
+            api_key_source: crate::models::ApiKeySource::Plain,
+            api_key_env_var: String::new(),
+            api_key_credential: String::new(),
         };
         let client = ApiClient::new(&config).expect("客户端应能构造");
         assert_eq!(
@@ -2258,6 +2261,9 @@ mod tests {
             timeout_secs: 30,
             probe_limits: true,
             only_models: vec![],
+            api_key_source: crate::models::ApiKeySource::Plain,
+            api_key_env_var: String::new(),
+            api_key_credential: String::new(),
         };
         let desc = describe_config(&config);
         assert!(!desc.contains("sk-super-secret-key-value-12345"));

@@ -138,6 +138,32 @@ impl ProbeStage {
     }
 }
 
+/// API Key 的来源方式。
+///
+/// 与前端 `ApiKeySource` 对应。引入它的动机：让用户不必在界面上以明文
+/// 粘贴 Key —— 可以只填一个环境变量名或系统凭据名，由后端在真正发请求前
+/// 才把明文取出来。这样明文既不落盘，也不进入前端渲染层。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ApiKeySource {
+    /// 明文：直接使用 `api_key` 字段
+    Plain,
+    /// 环境变量：从 `api_key_env_var` 指定的变量读取
+    Env,
+    /// Windows 凭据管理器：从 `api_key_credential` 指定的通用凭据读取
+    Credential,
+}
+
+impl Default for ApiKeySource {
+    /// 默认明文 —— 与引入本功能之前的行为完全一致，保证向后兼容。
+    ///
+    /// 与 `ProbeStatus` 同样手写而不 derive：避免将来在枚举头部插入变体时
+    /// 默认值被静默改变。
+    fn default() -> Self {
+        ApiKeySource::Plain
+    }
+}
+
 /* ---------------------------------------------------------------------------
  * 二、命令入参 / 出参结构体
  * ------------------------------------------------------------------------- */
@@ -148,6 +174,10 @@ impl ProbeStage {
 /// 它**绝不**被序列化回前端（本结构体虽 derive 了 Serialize 以便日志调试，
 /// 但全项目代码中没有任何一处把 ProbeConfig 直接 emit 出去），
 /// 也**绝不**被打印。参见 `error::redact_key`。
+///
+/// 当 `api_key_source` 不是 `Plain` 时，`api_key` 字段应留空 ——
+/// 明文由后端在 `resolve_api_key()` 里从环境变量 / 凭据管理器取出，
+/// 前端自始至终不接触它。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeConfig {
@@ -164,6 +194,17 @@ pub struct ProbeConfig {
     /// 可选模型白名单；空表示全量
     #[serde(default)]
     pub only_models: Vec<String>,
+    /// API Key 的来源方式：明文 / 环境变量 / Windows 凭据管理器。
+    ///
+    /// `#[serde(default)]` 保证旧版前端（只发 apiKey）仍可正常调用。
+    #[serde(default)]
+    pub api_key_source: ApiKeySource,
+    /// 当 `api_key_source = Env` 时要读取的环境变量名
+    #[serde(default)]
+    pub api_key_env_var: String,
+    /// 当 `api_key_source = Credential` 时要读取的 Windows 凭据名（target）
+    #[serde(default)]
+    pub api_key_credential: String,
 }
 
 impl ProbeConfig {
@@ -200,22 +241,97 @@ impl ProbeConfig {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect(),
+            api_key_source: self.api_key_source,
+            api_key_env_var: self.api_key_env_var.trim().to_string(),
+            api_key_credential: self.api_key_credential.trim().to_string(),
         }
     }
 
     /// 校验必填项。返回中文错误信息（面向用户）。
+    ///
+    /// 密钥按来源分别校验：明文模式要求 `api_key` 非空；
+    /// 环境变量 / 凭据模式则只要求对应的「名字」非空 ——
+    /// 真正的取值放在 `resolve_api_key()` 里做（可能失败，且失败原因
+    /// 与「参数不合法」性质不同，需分开提示）。
     pub fn validate(&self) -> Result<(), String> {
         if self.base_url.trim().is_empty() {
             return Err("Base URL 不能为空。".to_string());
         }
-        if self.api_key.trim().is_empty() {
-            return Err("API Key 不能为空。".to_string());
+
+        match self.api_key_source {
+            ApiKeySource::Plain => {
+                if self.api_key.trim().is_empty() {
+                    return Err("API Key 不能为空。".to_string());
+                }
+            }
+            ApiKeySource::Env => {
+                if self.api_key_env_var.trim().is_empty() {
+                    return Err("已选择从环境变量读取 API Key，但未填写环境变量名。".to_string());
+                }
+            }
+            ApiKeySource::Credential => {
+                if self.api_key_credential.trim().is_empty() {
+                    return Err("已选择从 Windows 凭据管理器读取 API Key，但未填写凭据名。".to_string());
+                }
+            }
         }
+
         // 规范化之后的 URL 至少要有 "https://x" 这样 9 个字符
         if self.base_url.len() < 9 || !self.base_url.contains("://") {
             return Err(format!("Base URL 格式不合法：{}", self.base_url));
         }
         Ok(())
+    }
+
+    /// 依据 `api_key_source` 解析出最终用于请求的明文 Key。
+    ///
+    /// 这是**唯一**把「外部来源」转成明文的入口。返回值含敏感信息，
+    /// 调用方只能把它交给 `ApiClient`，不得打印、不得回传前端。
+    pub fn resolve_api_key(&self) -> Result<String, String> {
+        match self.api_key_source {
+            ApiKeySource::Plain => {
+                let key = self.api_key.trim().to_string();
+                if key.is_empty() {
+                    return Err("API Key 不能为空。".to_string());
+                }
+                Ok(key)
+            }
+            ApiKeySource::Env => {
+                let name = self.api_key_env_var.trim();
+                if name.is_empty() {
+                    return Err("未填写环境变量名。".to_string());
+                }
+                match std::env::var(name) {
+                    Ok(value) if !value.trim().is_empty() => Ok(value.trim().to_string()),
+                    Ok(_) => Err(format!("环境变量 {name} 已存在但内容为空，请检查后再试。")),
+                    Err(_) => Err(format!(
+                        "环境变量 {name} 未设置。请先在系统环境变量中配置它\
+                        （可从凭据管理器取值后注入），或改回其它密钥来源。"
+                    )),
+                }
+            }
+            ApiKeySource::Credential => {
+                let target = self.api_key_credential.trim();
+                if target.is_empty() {
+                    return Err("未填写凭据名。".to_string());
+                }
+                crate::credential::read_generic_credential(target)
+            }
+        }
+    }
+
+    /// 返回一份「Key 已解析为明文」的副本，供 `ApiClient` 等下游使用。
+    ///
+    /// 解析后把来源归为 `Plain` 并清空外部来源的名字字段，让下游只处理
+    /// 一种形态，同时避免明文被二次解析。
+    pub fn with_resolved_key(&self) -> Result<Self, String> {
+        let key = self.resolve_api_key()?;
+        let mut resolved = self.clone();
+        resolved.api_key = key;
+        resolved.api_key_source = ApiKeySource::Plain;
+        resolved.api_key_env_var = String::new();
+        resolved.api_key_credential = String::new();
+        Ok(resolved)
     }
 }
 
@@ -582,6 +698,9 @@ mod tests {
             timeout_secs: 1,
             probe_limits: true,
             only_models: vec!["  ".to_string(), "gpt-4o".to_string()],
+            api_key_source: ApiKeySource::Plain,
+            api_key_env_var: String::new(),
+            api_key_credential: String::new(),
         };
         let n = cfg.normalized();
         assert_eq!(n.base_url, "https://api.openai.com/v1");
@@ -601,8 +720,101 @@ mod tests {
             timeout_secs: 30,
             probe_limits: false,
             only_models: vec![],
+            api_key_source: ApiKeySource::Plain,
+            api_key_env_var: String::new(),
+            api_key_credential: String::new(),
         };
         assert_eq!(cfg.normalized().base_url, "http://localhost:11434/v1");
+    }
+
+    #[test]
+    fn api_key_source_defaults_to_plain_for_backward_compat() {
+        // 旧版前端只发 baseUrl/apiKey/...，不带 apiKeySource 字段，
+        // 反序列化后应回退为 Plain，且行为与改动前一致。
+        let json = r#"{
+            "baseUrl": "https://api.example.com/v1",
+            "apiKey": "sk-legacy",
+            "concurrency": 3,
+            "timeoutSecs": 30,
+            "probeLimits": true
+        }"#;
+        let cfg: ProbeConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.api_key_source, ApiKeySource::Plain);
+        assert_eq!(cfg.resolve_api_key().unwrap(), "sk-legacy");
+    }
+
+    #[test]
+    fn validate_requires_the_name_matching_the_selected_source() {
+        // 环境变量模式：api_key 留空也合法，但变量名必填
+        let env_cfg = ProbeConfig {
+            base_url: "https://api.example.com/v1".to_string(),
+            api_key: String::new(),
+            concurrency: 3,
+            timeout_secs: 30,
+            probe_limits: true,
+            only_models: vec![],
+            api_key_source: ApiKeySource::Env,
+            api_key_env_var: "MY_API_KEY".to_string(),
+            api_key_credential: String::new(),
+        };
+        assert!(env_cfg.validate().is_ok());
+        assert!(env_cfg.with_resolved_key().is_err(), "变量未设置时应解析失败");
+
+        let env_no_name = ProbeConfig {
+            api_key_env_var: String::new(),
+            ..env_cfg.clone()
+        };
+        assert!(env_no_name.validate().is_err());
+
+        // 凭据模式：凭据名必填
+        let cred_cfg = ProbeConfig {
+            api_key_source: ApiKeySource::Credential,
+            api_key_env_var: String::new(),
+            api_key_credential: "modelscout/openai".to_string(),
+            ..env_cfg.clone()
+        };
+        assert!(cred_cfg.validate().is_ok());
+
+        let cred_no_name = ProbeConfig {
+            api_key_credential: String::new(),
+            ..cred_cfg
+        };
+        assert!(cred_no_name.validate().is_err());
+
+        // 明文模式：Key 必填
+        let plain_no_key = ProbeConfig {
+            api_key_source: ApiKeySource::Plain,
+            api_key: String::new(),
+            ..env_cfg
+        };
+        assert!(plain_no_key.validate().is_err());
+    }
+
+    #[test]
+    fn resolve_api_key_reads_environment_variable() {
+        // 用进程级唯一的名字，避免与其它测试相互干扰
+        let var = "MODELSCOUT_TEST_ENV_KEY_9F3A";
+        std::env::set_var(var, "  sk-from-env  ");
+
+        let cfg = ProbeConfig {
+            base_url: "https://api.example.com/v1".to_string(),
+            api_key: String::new(),
+            concurrency: 3,
+            timeout_secs: 30,
+            probe_limits: true,
+            only_models: vec![],
+            api_key_source: ApiKeySource::Env,
+            api_key_env_var: var.to_string(),
+            api_key_credential: String::new(),
+        };
+
+        let resolved = cfg.with_resolved_key().unwrap();
+        assert_eq!(resolved.api_key, "sk-from-env", "应去掉首尾空白");
+        // 解析后来源归一为明文，名字字段清空，避免二次解析
+        assert_eq!(resolved.api_key_source, ApiKeySource::Plain);
+        assert!(resolved.api_key_env_var.is_empty());
+
+        std::env::remove_var(var);
     }
 
     #[test]
