@@ -519,6 +519,8 @@ export const COMMAND_NAMES = {
   KEY_BUTLER_UPDATE_NOTE: 'key_butler_update_note',
   /** 修改 Base URL 与余额接口配置 */
   KEY_BUTLER_SET_CONFIG: 'key_butler_set_config',
+  /** 一次修改多条 Key（平台 / Base URL / 余额接口 / 备注） */
+  KEY_BUTLER_UPDATE_MANY: 'key_butler_update_many',
   /** 启用加密保存（设主密码并加密现有列表） */
   KEY_BUTLER_VAULT_ENABLE: 'key_butler_vault_enable',
   /** 用主密码解锁已有密文库 */
@@ -563,8 +565,17 @@ export type KeyStatus = 'active' | 'insufficient' | 'invalid' | 'error'
 /**
  * 余额接口的适配器类型。
  * 与 Rust 端 `key_butler::models::BalanceEndpointKind` 一一对应。
+ *
+ * - `builtin-oneapi`   : one-api / new-api 系中转站（billing/subscription + usage）
+ * - `builtin-deepseek` : DeepSeek 官方 `GET {host}/user/balance`
+ * - `none`             : 该平台没有公开余额接口（官方 OpenAI / Anthropic）
+ * - `custom`           : 用户自定义
  */
-export type BalanceEndpointKind = 'builtin-oneapi' | 'none' | 'custom'
+export type BalanceEndpointKind =
+  | 'builtin-oneapi'
+  | 'builtin-deepseek'
+  | 'none'
+  | 'custom'
 
 /** 自定义余额接口的 HTTP 方法。与 Rust 端 `HttpMethod` 一一对应。 */
 export type HttpMethod = 'GET' | 'POST'
@@ -649,6 +660,32 @@ export interface Snapshot {
 }
 
 /**
+ * 批量导入时的平台判定方式。
+ * 与 Rust 端 `key_butler::models::KeyImportMode` 一一对应。
+ *
+ * - `auto`   : 按 Key 形态自动识别平台（默认）
+ * - `manual` : 整批统一指定厂商（`KeyImportRequest.platform` 必填）
+ */
+export type KeyImportMode = 'auto' | 'manual'
+
+/**
+ * `key_butler_import` 的入参。
+ * 对应 Rust 结构体：`key_butler::models::KeyImportRequest`
+ */
+export interface KeyImportRequest {
+  /** 待导入的整段文本（提取规则在后端，前端不参与切分） */
+  text: string
+  /** 平台判定方式；不传 = `auto` */
+  mode?: KeyImportMode
+  /** 手动模式下的平台标识（如 `deepseek`） */
+  platform?: string | null
+  /** 手动模式下的 Base URL 覆盖；空 = 用该平台默认值 */
+  baseUrl?: string | null
+  /** 手动模式下的余额适配器覆盖；不传 = 用该平台默认值 */
+  balanceEndpoint?: BalanceEndpointKind | null
+}
+
+/**
  * `key_butler_import` 的返回。
  * 对应 Rust 结构体：`key_butler::models::KeyImportResult`
  */
@@ -720,6 +757,28 @@ export interface KeyConfigPatch {
   balanceEndpoint?: BalanceEndpointKind
   /** 新的自定义余额接口配置 */
   customEndpoint?: BalanceEndpoint | null
+}
+
+/**
+ * `key_butler_update_many` 的入参：一次改多条 Key。
+ * 对应 Rust 结构体：`key_butler::models::KeyBatchPatch`
+ *
+ * 语义与 `KeyConfigPatch` 一致 —— **`undefined` 表示该项不动**。
+ */
+export interface KeyBatchPatch {
+  /** 新的平台标识 */
+  platform?: string | null
+  /** 新的 Base URL；空字符串表示清空 */
+  baseUrl?: string | null
+  /** 新的余额接口适配器 */
+  balanceEndpoint?: BalanceEndpointKind | null
+  /** 新的备注 */
+  note?: string | null
+  /**
+   * 改平台时是否同时套用该平台默认的 Base URL 与余额适配器。
+   * 默认 `false`（只改标签）；显式的 `baseUrl` / `balanceEndpoint` 始终优先。
+   */
+  applyPlatformDefaults?: boolean
 }
 
 /**

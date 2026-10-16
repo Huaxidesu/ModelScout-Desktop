@@ -30,6 +30,7 @@ import {
   keyButlerReveal,
   keyButlerSetConfig,
   keyButlerSnapshots,
+  keyButlerUpdateMany,
   keyButlerUpdateNote,
   keyButlerVaultDisable,
   keyButlerVaultEnable,
@@ -37,12 +38,15 @@ import {
   keyButlerVaultUnlock,
 } from '@/api/commands'
 import type {
+  BalanceEndpointKind,
+  KeyBatchPatch,
   KeyCheckEntryDone,
   KeyCheckFinished,
   KeyCheckProgress,
   KeyCheckSummary,
   KeyConfigPatch,
   KeyEntry,
+  KeyImportRequest,
   KeyStatus,
   Snapshot,
   VaultStatus,
@@ -61,11 +65,17 @@ import type {
 export const PLATFORM_LABELS: Record<string, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
+  deepseek: 'DeepSeek',
   groq: 'Groq',
   google: 'Google',
   xai: 'xAI',
   huggingface: 'HuggingFace',
   replicate: 'Replicate',
+  openrouter: 'OpenRouter',
+  moonshot: 'Moonshot / Kimi',
+  zhipu: '智谱 GLM',
+  dashscope: '阿里通义 / 百炼',
+  siliconflow: '硅基流动',
   unknown: '通用 / 中转',
 }
 
@@ -73,6 +83,47 @@ export const PLATFORM_LABELS: Record<string, string> = {
 export function platformLabel(platform: string): string {
   return PLATFORM_LABELS[platform] ?? platform
 }
+
+/**
+ * 「手动指定厂商」下拉里可选的平台。
+ *
+ * 顺序即展示顺序：**能被自动识别的平台在前**（万一识别错了可以手动纠正），
+ * 「通用 / 中转」垫底。
+ *
+ * 【为什么这份清单写在前端而不是从后端拉】
+ * 它只决定「下拉里列出哪些选项」；Base URL / 余额适配器这类**行为性**默认值
+ * 一律由后端按平台标识查规则表（`platform::defaults_for`）得出。
+ * 因此这里少写一个平台最多是「下拉里看不到它」，不会造成配置漂移。
+ */
+export const IMPORT_PLATFORMS: Array<{ label: string; value: string }> = [
+  'deepseek',
+  'openai',
+  'anthropic',
+  'google',
+  'xai',
+  'groq',
+  'huggingface',
+  'replicate',
+  'openrouter',
+  'moonshot',
+  'zhipu',
+  'dashscope',
+  'siliconflow',
+  'unknown',
+].map((value) => ({ label: platformLabel(value), value }))
+
+/** 余额接口适配器 → 中文标签（批量编辑下拉用）。 */
+export const BALANCE_ENDPOINT_LABELS: Record<BalanceEndpointKind, string> = {
+  'builtin-oneapi': 'one-api / new-api 中转站',
+  'builtin-deepseek': 'DeepSeek 官方',
+  none: '无公开接口',
+  custom: '自定义',
+}
+
+/** 余额接口下拉选项。 */
+export const BALANCE_ENDPOINT_OPTIONS: Array<{ label: string; value: BalanceEndpointKind }> = (
+  ['builtin-oneapi', 'builtin-deepseek', 'none', 'custom'] as BalanceEndpointKind[]
+).map((value) => ({ label: BALANCE_ENDPOINT_LABELS[value], value }))
 
 /** 状态 → 中文标签。 */
 export const STATUS_LABELS: Record<KeyStatus, string> = {
@@ -144,6 +195,49 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
   const filterStatus = ref<KeyStatus[]>([])
   /** 余额不足阈值：余额 ≤ 该值判为不足 */
   const lowBalanceThreshold = ref(0)
+
+  /* ---------------------------- 多选（批量编辑） ---------------------------- */
+
+  /**
+   * 已勾选的 Key id。
+   *
+   * 【为什么用数组而不是 Set】
+   * Vue 的响应式对 Set 的 `has()` 追踪不如数组直白，而这里规模只有几十条，
+   * 用 `includes` 的 O(n) 完全不构成问题；换成 Set 反而要额外处理
+   * `reactive(new Set())` 的坑。
+   */
+  const selectedIds = ref<string[]>([])
+
+  /** 当前选中条数 */
+  const selectedCount = computed(() => selectedIds.value.length)
+
+  /** 是否选中了某条 */
+  function isSelected(id: string): boolean {
+    return selectedIds.value.includes(id)
+  }
+
+  /** 勾选 / 取消勾选一条。 */
+  function toggleSelected(id: string): void {
+    const index = selectedIds.value.indexOf(id)
+    if (index >= 0) selectedIds.value.splice(index, 1)
+    else selectedIds.value.push(id)
+  }
+
+  /** 批量勾选 / 取消勾选一组（分组标题上的「全选」用）。 */
+  function setSelected(ids: string[], selected: boolean): void {
+    if (selected) {
+      const merged = new Set([...selectedIds.value, ...ids])
+      selectedIds.value = Array.from(merged)
+    } else {
+      const drop = new Set(ids)
+      selectedIds.value = selectedIds.value.filter((id) => !drop.has(id))
+    }
+  }
+
+  /** 清空选择。 */
+  function clearSelection(): void {
+    selectedIds.value = []
+  }
 
   /* ---------------------------- 计算属性 ---------------------------- */
 
@@ -314,9 +408,13 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     }
   }
 
-  /** 批量导入。 */
-  async function importKeys(text: string) {
-    const result = await keyButlerImport(text)
+  /**
+   * 批量导入。
+   *
+   * @param request 文本 + 平台判定方式（自动识别 / 手动指定厂商）
+   */
+  async function importKeys(request: KeyImportRequest) {
+    const result = await keyButlerImport(request)
     entries.value = result.entries
     vault.value = await keyButlerVaultStatus()
     return result
@@ -361,6 +459,8 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
   /** 删除一条。 */
   async function remove(id: string): Promise<void> {
     entries.value = await keyButlerDelete(id)
+    // 删掉的那条不该继续留在选择里，否则批量编辑会报「找不到该 Key」
+    selectedIds.value = selectedIds.value.filter((selected) => selected !== id)
   }
 
   /** 改备注。 */
@@ -371,6 +471,19 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
   /** 改 Base URL / 余额接口。 */
   async function setConfig(id: string, patch: KeyConfigPatch): Promise<void> {
     entries.value = await keyButlerSetConfig(id, patch)
+  }
+
+  /**
+   * 批量改多条 Key（平台 / Base URL / 余额接口 / 备注）。
+   *
+   * 改动成功后清空选择 —— 用户刚刚处理完这一批，继续留着勾选没有意义，
+   * 反而会让下一次批量操作误伤。
+   */
+  async function updateMany(ids: string[], patch: KeyBatchPatch): Promise<number> {
+    entries.value = await keyButlerUpdateMany(ids, patch)
+    const count = ids.length
+    clearSelection()
+    return count
   }
 
   /**
@@ -410,6 +523,7 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     runId.value = ''
     checking.value = false
     lastSummary.value = null
+    selectedIds.value = []
     progress.value = { completed: 0, total: 0, percent: 0, currentMaskedKey: '', stageLabel: '' }
   }
 
@@ -426,12 +540,14 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     filterPlatform,
     filterStatus,
     lowBalanceThreshold,
+    selectedIds,
     // 计算属性
     isLocked,
     platformOptions,
     filtered,
     grouped,
     stats,
+    selectedCount,
     // 事件
     applyProgress,
     applyEntryDone,
@@ -444,6 +560,11 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     remove,
     updateNote,
     setConfig,
+    updateMany,
+    isSelected,
+    toggleSelected,
+    setSelected,
+    clearSelection,
     reveal,
     loadSnapshots,
     enableVault,

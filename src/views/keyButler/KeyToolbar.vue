@@ -23,6 +23,7 @@ import { ProbeApiError } from '@/api/commands'
 const emit = defineEmits<{
   (e: 'import'): void
   (e: 'vault'): void
+  (e: 'batch-edit'): void
 }>()
 
 const store = useKeyButlerStore()
@@ -103,6 +104,14 @@ async function stopCheck(): Promise<void> {
     </NTooltip>
 
     <div class="mx-1 h-4 w-px bg-ms-border" />
+
+    <!-- 批量编辑（有勾选时才出现） -->
+    <div v-if="store.selectedCount > 0" class="flex items-center gap-2">
+      <NTag size="tiny" :bordered="false" type="info">已选 {{ store.selectedCount }}</NTag>
+      <NButton size="small" type="primary" @click="emit('batch-edit')">批量编辑</NButton>
+      <NButton size="small" quaternary @click="store.clearSelection()">取消选择</NButton>
+      <div class="mx-1 h-4 w-px bg-ms-border" />
+    </div>
 
     <!-- 过滤 -->
     <!-- consistent-menu-width=false：菜单按内容自适应宽度，避免长平台名被截断 -->

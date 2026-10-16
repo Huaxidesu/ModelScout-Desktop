@@ -140,7 +140,7 @@ pub fn run() {
                 .as_deref()
                 .unwrap_or_else(|| std::path::Path::new("."));
             let rule_count = key_butler::platform::init(resource_ref, data_dir.as_deref());
-            println!("[ModelScout] Key 管家前缀表：{rule_count} 条规则");
+            println!("[ModelScout] Key 管家平台规则表：{rule_count} 条");
 
             // 落盘路径：密文库与余额快照都放在 app data 目录下
             if let Some(dir) = data_dir.as_deref() {
@@ -163,7 +163,7 @@ pub fn run() {
             commands::get_probe_state,    // 5. 查询实时快照
             commands::save_config_file,   // 6. 导出配置到磁盘
             commands::get_dictionary_info, // 7. 字典自检（辅助）
-            // ---- Key 管家（Beta）：13 个命令 ----
+            // ---- Key 管家（Beta）：14 个命令 ----
             // 函数名必须与前端 COMMAND_NAMES.KEY_BUTLER_* 的字符串值逐字一致
             key_butler::commands::key_butler_import,
             key_butler::commands::key_butler_check,
@@ -173,6 +173,7 @@ pub fn run() {
             key_butler::commands::key_butler_delete,
             key_butler::commands::key_butler_update_note,
             key_butler::commands::key_butler_set_config,
+            key_butler::commands::key_butler_update_many,
             key_butler::commands::key_butler_vault_enable,
             key_butler::commands::key_butler_vault_unlock,
             key_butler::commands::key_butler_vault_disable,

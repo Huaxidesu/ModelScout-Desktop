@@ -22,7 +22,7 @@
  */
 
 import { computed, ref } from 'vue'
-import { NButton, NDropdown, NTooltip, useMessage } from 'naive-ui'
+import { NButton, NCheckbox, NDropdown, NTooltip, useMessage } from 'naive-ui'
 
 import { keyButlerReveal } from '@/api/commands'
 import type { KeyEntry, KeyStatus } from '@/types/contracts'
@@ -35,6 +35,8 @@ const props = defineProps<{
   busy?: boolean
   /** 是否处于锁定态（禁用全部操作） */
   locked?: boolean
+  /** 是否已勾选（批量编辑） */
+  selected?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -42,6 +44,7 @@ const emit = defineEmits<{
   (e: 'history', entry: KeyEntry): void
   (e: 'edit', entry: KeyEntry): void
   (e: 'delete', entry: KeyEntry): void
+  (e: 'select', entry: KeyEntry, selected: boolean): void
 }>()
 
 const message = useMessage()
@@ -130,6 +133,15 @@ function handleMenu(key: string): void {
 
 <template>
   <div class="flex items-center gap-3 border-b border-ms-border/60 px-3 py-1.5 text-[11px] last:border-b-0 hover:bg-white/[0.02]">
+    <!-- 多选（批量编辑） -->
+    <NCheckbox
+      class="shrink-0"
+      size="small"
+      :checked="selected"
+      :disabled="locked"
+      @update:checked="emit('select', entry, $event)"
+    />
+
     <!-- 脱敏 Key -->
     <div class="min-w-0 flex-1">
       <span class="font-mono text-ms-text">{{ entry.maskedKey }}</span>

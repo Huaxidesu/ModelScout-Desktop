@@ -486,6 +486,28 @@ impl KeyButlerState {
         }
     }
 
+    /// 就地把**一批**条目交给同一个闭包修改；返回实际改动的条数。
+    ///
+    /// 批量编辑必须一次拿锁改完：逐条调 `update` 会拿 N 次锁，
+    /// 中途还可能被检测任务插进来看到「改了一半」的中间态。
+    pub async fn update_many<F>(&self, ids: &[String], apply: F) -> usize
+    where
+        F: Fn(&mut KeyEntry),
+    {
+        if ids.is_empty() {
+            return 0;
+        }
+        let mut inner = self.inner.lock().await;
+        let mut changed = 0usize;
+        for stored in inner.keys.iter_mut() {
+            if ids.iter().any(|id| id == &stored.entry.id) {
+                apply(&mut stored.entry);
+                changed += 1;
+            }
+        }
+        changed
+    }
+
     /// 写操作的前置检查：密文库启用但未解锁时拒绝写入。
     pub async fn ensure_writable(&self) -> Result<(), String> {
         if !self.enabled_on_disk() {

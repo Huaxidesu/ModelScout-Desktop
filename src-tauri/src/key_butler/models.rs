@@ -75,11 +75,15 @@ pub enum BalanceEndpointKind {
     /// 内置模板：one-api / new-api 系中转站
     /// （`/v1/dashboard/billing/subscription` + `/v1/dashboard/billing/usage`）
     ///
-    /// 序列化值刻意用 `builtin-oneapi`（带连字符），与任务书给出的
-    /// TS 联合类型 `'builtin-oneapi' | 'none' | 'custom'` 对齐 ——
+    /// 序列化值刻意用 `builtin-oneapi`（带连字符），与 TS 联合类型
+    /// `'builtin-oneapi' | 'builtin-deepseek' | 'none' | 'custom'` 对齐 ——
     /// 单靠 rename_all = "camelCase" 会得到 `builtinOneapi`，不匹配。
     #[serde(rename = "builtin-oneapi")]
     BuiltinOneapi,
+    /// 内置模板：DeepSeek 官方 `GET {host}/user/balance`
+    /// （返回 `balance_infos[0].total_balance` 与 `currency`）
+    #[serde(rename = "builtin-deepseek")]
+    BuiltinDeepseek,
     /// 该平台没有公开余额接口（官方 OpenAI / Anthropic 默认此项）
     None,
     /// 用户自定义（见 `BalanceEndpoint`）
@@ -241,6 +245,48 @@ pub struct Snapshot {
  * 三、命令入参 / 出参
  * ------------------------------------------------------------------------- */
 
+/// 批量导入时的平台判定方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KeyImportMode {
+    /// 按 Key 形态自动识别平台（默认）
+    Auto,
+    /// 整批统一指定厂商（`KeyImportRequest.platform` 必填）
+    Manual,
+}
+
+impl Default for KeyImportMode {
+    /// 默认自动识别 —— 大多数情况下形态足够区分，不该逼用户先做选择。
+    fn default() -> Self {
+        KeyImportMode::Auto
+    }
+}
+
+/// `key_butler_import` 的入参。
+///
+/// 手动模式（`mode == Manual`）下，`platform` 是**必填**的；`base_url` 与
+/// `balance_endpoint` 是**可选覆盖**：
+///   - 不传 / 传空 → 用该平台在规则表里的默认值（见 `platform::defaults_for`）
+///   - 传了 → 覆盖默认值
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyImportRequest {
+    /// 待导入的整段文本（提取规则在后端，前端不参与切分）
+    pub text: String,
+    /// 平台判定方式；不传 = `Auto`
+    #[serde(default)]
+    pub mode: KeyImportMode,
+    /// 手动模式下的平台标识（如 `deepseek`）
+    #[serde(default)]
+    pub platform: Option<String>,
+    /// 手动模式下的 Base URL 覆盖；空 = 用该平台默认值
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// 手动模式下的余额适配器覆盖；不传 = 用该平台默认值
+    #[serde(default)]
+    pub balance_endpoint: Option<BalanceEndpointKind>,
+}
+
 /// `key_butler_import` 的返回。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -309,6 +355,36 @@ pub struct KeyConfigPatch {
     /// 新的自定义余额接口配置
     #[serde(default)]
     pub custom_endpoint: Option<BalanceEndpoint>,
+}
+
+/// `key_butler_update_many` 的入参：一次改多条 Key。
+///
+/// 语义与 `KeyConfigPatch` 一致 —— **`None` 表示该项不动**。
+/// 与单条版本的区别是多了 `platform` 与 `note`：
+/// 批量编辑最常见的诉求就是「这一批其实都是 DeepSeek，平台识别错了」，
+/// 只改平台标签而不动端点往往不够用，因此提供 `apply_platform_defaults`
+/// 让「改平台」可以顺带套用该平台的默认 Base URL 与余额适配器。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyBatchPatch {
+    /// 新的平台标识
+    #[serde(default)]
+    pub platform: Option<String>,
+    /// 新的 Base URL；空字符串表示清空（后端归一为 `None`）
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// 新的余额接口适配器
+    #[serde(default)]
+    pub balance_endpoint: Option<BalanceEndpointKind>,
+    /// 新的备注
+    #[serde(default)]
+    pub note: Option<String>,
+    /// 改平台时是否同时套用该平台在规则表里的默认 Base URL 与余额适配器。
+    ///
+    /// 默认 `false`：只改标签，避免「只想改个名字」却把用户手填的 Base URL 冲掉。
+    /// 显式的 `base_url` / `balance_endpoint` 始终优先于本项。
+    #[serde(default)]
+    pub apply_platform_defaults: bool,
 }
 
 /// 加密保存（vault）的当前状态。

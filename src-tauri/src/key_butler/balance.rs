@@ -5,9 +5,12 @@
  *
  * 【现实约束（任务书第四节）】
  *   - OpenAI 官方**已下线**公开余额接口；Anthropic **没有**公开余额端点。
- *   - 真正能查到余额的主要是 one-api / new-api 系中转站：
- *       GET {host}/v1/dashboard/billing/subscription  → 总额度
- *       GET {host}/v1/dashboard/billing/usage         → 已用额度（**单位是美分**）
+ *   - 真正能查到余额的主要是两类：
+ *       a) one-api / new-api 系中转站（`builtin-oneapi`）：
+ *            GET {host}/v1/dashboard/billing/subscription  → 总额度
+ *            GET {host}/v1/dashboard/billing/usage         → 已用额度（**单位是美分**）
+ *       b) DeepSeek 官方（`builtin-deepseek`）：
+ *            GET {host}/user/balance → balance_infos[0].total_balance（字符串）
  *   因此必须做适配器，而不是假设「所有平台都能查余额」。
  *
  * 【铁律】余额查询失败 **≠** Key 失效。
@@ -97,6 +100,7 @@ pub async fn query(
     match kind {
         BalanceEndpointKind::None => BalanceOutcome::no_endpoint(),
         BalanceEndpointKind::BuiltinOneapi => query_oneapi(client, base, api_key).await,
+        BalanceEndpointKind::BuiltinDeepseek => query_deepseek(client, base, api_key).await,
         BalanceEndpointKind::Custom => match custom {
             Some(endpoint) => query_custom(client, base, api_key, endpoint).await,
             None => BalanceOutcome::failed(
@@ -156,6 +160,58 @@ async fn query_oneapi(client: &reqwest::Client, base_url: &str, api_key: &str) -
     BalanceOutcome {
         balance: Some(total - used_usd),
         currency: Some("USD".to_string()),
+        error: None,
+        note: None,
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * 内置：DeepSeek 官方
+ * ------------------------------------------------------------------------- */
+
+/// DeepSeek 官方余额查询。
+///
+/// `GET {host}/user/balance` →
+/// ```json
+/// { "is_available": true,
+///   "balance_infos": [
+///     { "currency": "CNY", "total_balance": "110.00",
+///       "granted_balance": "10.00", "topped_up_balance": "100.00" } ] }
+/// ```
+///
+/// `total_balance` 是**字符串**（且已包含赠金），由 `as_f64` 直接消化。
+/// 多币种账户会返回多个 `balance_infos`，这里取第一条 —— 与官方文档的
+/// 「主币种在前」一致；要精确区分币种请用「自定义」余额接口。
+async fn query_deepseek(client: &reqwest::Client, base_url: &str, api_key: &str) -> BalanceOutcome {
+    let host = strip_version_suffix(base_url);
+    let url = format!("{host}/user/balance");
+
+    let value = match get_json(client, &url, api_key).await {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+
+    let first = json_path(&value, "balance_infos.0");
+    let balance = first
+        .and_then(|info| json_path(info, "total_balance"))
+        .and_then(as_f64);
+
+    let Some(balance) = balance else {
+        return BalanceOutcome::failed(
+            ProbeErrorKind::ParseError,
+            "DeepSeek 余额接口返回的 JSON 里没有 balance_infos[0].total_balance，\
+             无法解析余额。可在该 Key 上改用「自定义」余额接口。",
+        );
+    };
+
+    let currency = first
+        .and_then(|info| json_path(info, "currency"))
+        .and_then(|value| value.as_str())
+        .map(|text| text.to_string());
+
+    BalanceOutcome {
+        balance: Some(balance),
+        currency,
         error: None,
         note: None,
     }
@@ -495,6 +551,29 @@ mod tests {
         let used_cents = 1234.0_f64;
         let balance = total - used_cents / 100.0;
         assert!((balance - 87.66).abs() < 1e-9, "实际 {balance}");
+    }
+
+    /// DeepSeek 的 `total_balance` 是字符串，且嵌在 `balance_infos[0]` 里。
+    #[test]
+    fn deepseek_balance_path_parses_numeric_string() {
+        let value = json!({
+            "is_available": true,
+            "balance_infos": [
+                { "currency": "CNY", "total_balance": "110.00",
+                  "granted_balance": "10.00", "topped_up_balance": "100.00" }
+            ]
+        });
+        let first = json_path(&value, "balance_infos.0");
+        assert_eq!(
+            first.and_then(|info| json_path(info, "total_balance")).and_then(as_f64),
+            Some(110.0)
+        );
+        assert_eq!(
+            first
+                .and_then(|info| json_path(info, "currency"))
+                .and_then(|c| c.as_str()),
+            Some("CNY")
+        );
     }
 
     #[test]

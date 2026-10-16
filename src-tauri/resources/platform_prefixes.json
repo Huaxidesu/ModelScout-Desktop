@@ -48,10 +48,52 @@
     "defaultBaseUrl": null
   },
   {
+    "prefix": "sk-or-",
+    "platform": "openrouter",
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://openrouter.ai/api/v1"
+  },
+  {
+    "prefix": "sk-",
+    "pattern": "^sk-[0-9a-fA-F]{32}$",
+    "platform": "deepseek",
+    "balanceEndpoint": "builtin-deepseek",
+    "defaultBaseUrl": "https://api.deepseek.com/v1",
+    "note": "DeepSeek 官方：sk- + 32 位十六进制。前缀与通用中转站撞车，故用正则精确区分。"
+  },
+  {
     "prefix": "sk-",
     "platform": "unknown",
     "balanceEndpoint": "builtin-oneapi",
     "defaultBaseUrl": null,
-    "note": "通用 OpenAI 兼容/中转"
+    "note": "通用 OpenAI 兼容/中转（未命中更具体规则时的兜底）"
+  },
+  {
+    "platform": "moonshot",
+    "autoDetect": false,
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://api.moonshot.cn/v1",
+    "note": "Moonshot / Kimi：Key 同样是 sk- 开头，无法与前缀区分，只能在导入时手动指定。"
+  },
+  {
+    "platform": "zhipu",
+    "autoDetect": false,
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://open.bigmodel.cn/api/paas/v4",
+    "note": "智谱 GLM：Key 形如 id.secret，无稳定前缀，手动指定。"
+  },
+  {
+    "platform": "dashscope",
+    "autoDetect": false,
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "note": "阿里云百炼 / 通义千问（OpenAI 兼容模式），手动指定。"
+  },
+  {
+    "platform": "siliconflow",
+    "autoDetect": false,
+    "balanceEndpoint": "none",
+    "defaultBaseUrl": "https://api.siliconflow.cn/v1",
+    "note": "硅基流动：Key 同样是 sk- 开头，手动指定。"
   }
 ]

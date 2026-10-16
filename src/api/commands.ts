@@ -20,10 +20,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { COMMAND_NAMES } from '@/types/contracts'
 import type {
+  KeyBatchPatch,
   KeyCheckRequest,
   KeyCheckSummary,
   KeyConfigPatch,
   KeyEntry,
+  KeyImportRequest,
   KeyImportResult,
   ModelListResult,
   PingResult,
@@ -219,8 +221,8 @@ export function getDictionaryInfo(): Promise<{ entryCount: number }> {
  * 提取在**后端**完成（与 `utils/parseConnection.ts` 同一套正则思路），
  * 前端只负责把整段文本原样传过去。
  */
-export function keyButlerImport(text: string): Promise<KeyImportResult> {
-  return call<KeyImportResult>(COMMAND_NAMES.KEY_BUTLER_IMPORT, { text })
+export function keyButlerImport(request: KeyImportRequest): Promise<KeyImportResult> {
+  return call<KeyImportResult>(COMMAND_NAMES.KEY_BUTLER_IMPORT, { request })
 }
 
 /**
@@ -264,6 +266,11 @@ export function keyButlerUpdateNote(id: string, note: string): Promise<KeyEntry[
 /** 修改 Base URL 与余额接口配置，返回更新后的全量列表。 */
 export function keyButlerSetConfig(id: string, patch: KeyConfigPatch): Promise<KeyEntry[]> {
   return call<KeyEntry[]>(COMMAND_NAMES.KEY_BUTLER_SET_CONFIG, { id, patch })
+}
+
+/** 一次修改多条 Key（平台 / Base URL / 余额接口 / 备注），返回更新后的全量列表。 */
+export function keyButlerUpdateMany(ids: string[], patch: KeyBatchPatch): Promise<KeyEntry[]> {
+  return call<KeyEntry[]>(COMMAND_NAMES.KEY_BUTLER_UPDATE_MANY, { ids, patch })
 }
 
 /** 启用加密保存（设置主密码并加密当前列表）。 */

@@ -26,6 +26,7 @@ import type { KeyEntry } from '@/types/contracts'
 import KeyToolbar from './KeyToolbar.vue'
 import KeyGroupSection from './KeyGroupSection.vue'
 import KeyImportDialog from './KeyImportDialog.vue'
+import KeyBatchEditDialog from './KeyBatchEditDialog.vue'
 import VaultDialog from './VaultDialog.vue'
 import BalanceEndpointDialog from './BalanceEndpointDialog.vue'
 import BalanceHistoryDrawer from './BalanceHistoryDrawer.vue'
@@ -39,6 +40,7 @@ const dialog = useDialog()
 const showImport = ref(false)
 const showVault = ref(false)
 const showEdit = ref(false)
+const showBatchEdit = ref(false)
 const showHistory = ref(false)
 const editingEntry = ref<KeyEntry | null>(null)
 const historyEntry = ref<KeyEntry | null>(null)
@@ -85,6 +87,15 @@ async function checkOne(entry: KeyEntry): Promise<void> {
     await store.check([entry.id])
   } catch (error) {
     message.error(error instanceof ProbeApiError ? error.message : String(error))
+  }
+}
+
+/** 勾选 / 取消勾选单条 */
+function toggleSelect(entry: KeyEntry, selected: boolean): void {
+  if (selected) {
+    if (!store.isSelected(entry.id)) store.toggleSelected(entry.id)
+  } else if (store.isSelected(entry.id)) {
+    store.toggleSelected(entry.id)
   }
 }
 
@@ -135,7 +146,12 @@ const summaryText = computed(() => {
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
     <!-- 工具栏 -->
-    <KeyToolbar class="shrink-0" @import="showImport = true" @vault="showVault = true" />
+    <KeyToolbar
+      class="shrink-0"
+      @import="showImport = true"
+      @vault="showVault = true"
+      @batch-edit="showBatchEdit = true"
+    />
 
     <!-- 锁定提示 -->
     <NAlert
@@ -161,7 +177,9 @@ const summaryText = computed(() => {
         <div class="text-4xl opacity-20">🔑</div>
         <div class="text-sm text-ms-text-dim">还没有 Key</div>
         <div class="max-w-md text-center text-xs leading-relaxed text-ms-text-faint">
-          点「批量粘贴」把一批 Key 整段粘进来，程序会按前缀识别平台、自动去重。<br />
+          点「批量粘贴」把一批 Key 整段粘进来：默认按形态自动识别平台，
+          也可以在导入时手动指定厂商（Moonshot、硅基流动这类 Key 形态和
+          通用中转一样，只能手动指定）。<br />
           默认不落盘 —— Key 只存在本次会话内存里，关闭应用即清空。
         </div>
         <NButton type="primary" size="medium" @click="showImport = true">批量粘贴</NButton>
@@ -179,10 +197,13 @@ const summaryText = computed(() => {
           :currency="group.currency"
           :locked="store.isLocked"
           :checking="store.checking"
+          :selected-ids="store.selectedIds"
           @check="checkOne"
           @history="openHistory"
           @edit="openEdit"
           @delete="confirmDelete"
+          @select="toggleSelect"
+          @select-group="store.setSelected"
         />
 
         <NEmpty
@@ -208,6 +229,7 @@ const summaryText = computed(() => {
 
     <!-- 对话框 -->
     <KeyImportDialog v-model:show="showImport" />
+    <KeyBatchEditDialog v-model:show="showBatchEdit" :ids="store.selectedIds" />
     <VaultDialog v-model:show="showVault" />
     <BalanceEndpointDialog v-model:show="showEdit" :entry="editingEntry" />
     <BalanceHistoryDrawer v-model:show="showHistory" :entry="historyEntry" />

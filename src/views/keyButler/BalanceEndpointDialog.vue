@@ -20,7 +20,7 @@ import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NInput, NInputNumber, NModal, NSelect, useMessage } from 'naive-ui'
 
 import type { BalanceEndpoint, BalanceEndpointKind, HttpMethod, KeyEntry } from '@/types/contracts'
-import { useKeyButlerStore } from '@/stores/keyButler'
+import { BALANCE_ENDPOINT_OPTIONS, useKeyButlerStore } from '@/stores/keyButler'
 import { ProbeApiError } from '@/api/commands'
 
 const props = defineProps<{
@@ -45,12 +45,13 @@ const usedPath = ref('')
 const balancePath = ref('')
 const unitDivisor = ref(1)
 
-/** 适配器选项 */
-const KIND_OPTIONS: Array<{ label: string; value: BalanceEndpointKind }> = [
-  { label: 'one-api / new-api 系（内置）', value: 'builtin-oneapi' },
-  { label: '该平台无公开余额接口', value: 'none' },
-  { label: '自定义', value: 'custom' },
-]
+/**
+ * 适配器选项。
+ *
+ * 直接复用 store 里的共享常量 —— 单条编辑与批量编辑必须给出同一套选项，
+ * 各自维护一份迟早会漏掉新适配器（`builtin-deepseek` 就是这么漏掉的）。
+ */
+const KIND_OPTIONS = BALANCE_ENDPOINT_OPTIONS
 
 const METHOD_OPTIONS: Array<{ label: string; value: HttpMethod }> = [
   { label: 'GET', value: 'GET' },

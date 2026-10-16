@@ -4,7 +4,7 @@
  * ============================================================================
  *
  * 【职责】
- * 把 Key 管家的能力暴露为 13 个 `key_butler_*` 命令。
+ * 把 Key 管家的能力暴露为 14 个 `key_butler_*` 命令。
  * 命令名必须与前端 `COMMAND_NAMES.KEY_BUTLER_*` 的字符串值逐字一致
  * （`scripts/cross_check.py` 会把 `generate_handler!` 里的函数名与前端常量比对）。
  *
@@ -33,9 +33,9 @@ use crate::events;
 use crate::key_butler::balance;
 use crate::key_butler::classify;
 use crate::key_butler::models::{
-    BalanceEndpointKind, CheckStage, KeyCheckEntryDone, KeyCheckFinished, KeyCheckProgress,
-    KeyCheckRequest, KeyCheckSummary, KeyConfigPatch, KeyEntry, KeyImportResult, KeyStatus, Snapshot,
-    VaultStatus,
+    BalanceEndpointKind, CheckStage, KeyBatchPatch, KeyCheckEntryDone, KeyCheckFinished,
+    KeyCheckProgress, KeyCheckRequest, KeyCheckSummary, KeyConfigPatch, KeyEntry, KeyImportMode,
+    KeyImportRequest, KeyImportResult, KeyStatus, Snapshot, VaultStatus,
 };
 use crate::key_butler::platform;
 use crate::key_butler::vault::{mask_key, CheckRun, KeyButlerState, StoredKey};
@@ -220,18 +220,34 @@ fn extract_keys(text: &str) -> Vec<String> {
 fn parse_endpoint_kind(raw: &str) -> BalanceEndpointKind {
     match raw.trim().to_ascii_lowercase().as_str() {
         "builtin-oneapi" => BalanceEndpointKind::BuiltinOneapi,
+        "builtin-deepseek" => BalanceEndpointKind::BuiltinDeepseek,
         "custom" => BalanceEndpointKind::Custom,
         _ => BalanceEndpointKind::None,
     }
 }
 
-/// 由明文 Key 构造一条待导入的条目。
+/// 由明文 Key 构造一条待导入的条目（按形态自动识别平台）。
 fn build_entry(key: &str) -> KeyEntry {
     let rule = platform::identify(key);
+    build_entry_with(
+        key,
+        rule.platform,
+        rule.default_base_url,
+        parse_endpoint_kind(&rule.balance_endpoint),
+    )
+}
+
+/// 由明文 Key + 指定平台配置构造条目（「手动指定厂商」导入时使用）。
+fn build_entry_with(
+    key: &str,
+    platform: String,
+    base_url: Option<String>,
+    balance_endpoint: BalanceEndpointKind,
+) -> KeyEntry {
     KeyEntry {
         id: uuid::Uuid::new_v4().to_string(),
         masked_key: mask_key(key),
-        platform: rule.platform,
+        platform,
         // note 留给用户写备注；规则里的说明不进这里，避免导入后满是机器文案
         note: String::new(),
         created_at: now_ms(),
@@ -242,10 +258,50 @@ fn build_entry(key: &str) -> KeyEntry {
         balance_known: false,
         currency: None,
         error_category: None,
-        balance_endpoint: parse_endpoint_kind(&rule.balance_endpoint),
+        balance_endpoint,
         custom_endpoint: None,
-        base_url: rule.default_base_url,
+        base_url,
     }
+}
+
+/// 解析「手动指定厂商」导入时的整批平台配置。
+///
+/// 自动模式返回 `Ok(None)`；手动模式返回
+/// `(平台标识, Base URL, 余额适配器)`，其中 Base URL / 适配器优先取请求里的
+/// 显式覆盖，其次取规则表里该平台的默认值。
+fn resolve_manual_config(
+    request: &KeyImportRequest,
+) -> Result<Option<(String, Option<String>, BalanceEndpointKind)>, CommandError> {
+    if request.mode != KeyImportMode::Manual {
+        return Ok(None);
+    }
+
+    let platform = request
+        .platform
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| CommandError::invalid_input("手动指定厂商模式下必须选择一个平台。"))?
+        .to_string();
+
+    let defaults = platform::defaults_for(&platform);
+
+    let base_url = request
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .or_else(|| defaults.as_ref().and_then(|(base, _)| base.clone()));
+
+    let endpoint = request.balance_endpoint.unwrap_or_else(|| {
+        defaults
+            .as_ref()
+            .map(|(_, raw)| parse_endpoint_kind(raw))
+            .unwrap_or(BalanceEndpointKind::None)
+    });
+
+    Ok(Some((platform, base_url, endpoint)))
 }
 
 /* ---------------------------------------------------------------------------
@@ -469,7 +525,9 @@ async fn check_one(
     // 该平台是否本应有余额接口：`none` 表示「本来就没有」，不算失败
     let balance_applicable = matches!(
         kind,
-        BalanceEndpointKind::BuiltinOneapi | BalanceEndpointKind::Custom
+        BalanceEndpointKind::BuiltinOneapi
+            | BalanceEndpointKind::BuiltinDeepseek
+            | BalanceEndpointKind::Custom
     );
 
     // 阶段 2：余额
@@ -551,16 +609,25 @@ async fn check_one(
  * 命令 1：导入
  * ------------------------------------------------------------------------- */
 
-/// 批量文本 → 提取 Key → 前缀识别 → 入列（去重）。
+/// 批量文本 → 提取 Key → 平台判定 → 入列（去重）。
+///
+/// 平台判定有两种模式（见 `KeyImportRequest`）：
+///   - `auto`：按 Key 形态自动识别（默认）
+///   - `manual`：整批统一指定厂商 —— 给「形态无法区分」的平台兜底，
+///     例如 Moonshot / 硅基流动的 Key 同样是 `sk-` 开头。
 #[tauri::command]
 pub async fn key_butler_import(
     state: State<'_, KeyButlerState>,
-    text: String,
+    request: KeyImportRequest,
 ) -> Result<KeyImportResult, CommandError> {
     state
         .ensure_writable()
         .await
         .map_err(CommandError::invalid_input)?;
+
+    // 手动模式的整批平台配置只解析一次
+    let manual = resolve_manual_config(&request)?;
+    let text = request.text;
 
     let candidates = extract_keys(&text);
     let existing: HashSet<String> = state.existing_keys().await.into_iter().collect();
@@ -574,7 +641,13 @@ pub async fn key_butler_import(
             duplicates += 1;
             continue;
         }
-        items.push(StoredKey::new(key.clone(), build_entry(key)));
+        let entry = match &manual {
+            Some((platform, base_url, endpoint)) => {
+                build_entry_with(key, platform.clone(), base_url.clone(), *endpoint)
+            }
+            None => build_entry(key),
+        };
+        items.push(StoredKey::new(key.clone(), entry));
     }
 
     // 没能提取出 Key 的非空行数（给用户一个「这段文字里有多少是废话」的量）
@@ -818,7 +891,101 @@ pub async fn key_butler_set_config(
 }
 
 /* ---------------------------------------------------------------------------
- * 命令 9 ~ 12：加密保存
+ * 命令 9：批量编辑
+ * ------------------------------------------------------------------------- */
+
+/// 把一次批量补丁应用到单条条目上。
+///
+/// 优先级：平台默认值（可选） < 显式 `base_url` / `balance_endpoint`。
+fn apply_batch_patch(
+    entry: &mut KeyEntry,
+    patch: &KeyBatchPatch,
+    platform_override: Option<&(String, Option<String>, BalanceEndpointKind)>,
+) {
+    if let Some((platform, default_base, default_endpoint)) = platform_override {
+        entry.platform = platform.clone();
+        if patch.apply_platform_defaults {
+            entry.base_url = default_base.clone();
+            entry.balance_endpoint = *default_endpoint;
+            if *default_endpoint != BalanceEndpointKind::Custom {
+                entry.custom_endpoint = None;
+            }
+        }
+    }
+
+    if let Some(base) = patch.base_url.as_deref() {
+        let trimmed = base.trim().to_string();
+        // 空字符串表示「清空」，归一为 None
+        entry.base_url = if trimmed.is_empty() { None } else { Some(trimmed) };
+    }
+    if let Some(kind) = patch.balance_endpoint {
+        entry.balance_endpoint = kind;
+        if kind != BalanceEndpointKind::Custom {
+            entry.custom_endpoint = None;
+        }
+    }
+    if let Some(note) = patch.note.as_deref() {
+        entry.note = note.to_string();
+    }
+}
+
+/// 一次修改多条 Key（平台 / Base URL / 余额接口 / 备注）。
+///
+/// 返回修改后的**全量**脱敏列表（与单条版本保持同一返回形状，省一次往返）。
+#[tauri::command]
+pub async fn key_butler_update_many(
+    state: State<'_, KeyButlerState>,
+    ids: Vec<String>,
+    patch: KeyBatchPatch,
+) -> Result<Vec<KeyEntry>, CommandError> {
+    state
+        .ensure_writable()
+        .await
+        .map_err(CommandError::invalid_input)?;
+
+    if ids.is_empty() {
+        return Err(CommandError::invalid_input("请先选择要修改的 Key。"));
+    }
+
+    // 平台默认配置只查一次规则表，避免每条都查
+    let platform_override = patch
+        .platform
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|platform| {
+            let defaults = platform::defaults_for(platform);
+            let base = defaults.as_ref().and_then(|(base, _)| base.clone());
+            let endpoint = defaults
+                .as_ref()
+                .map(|(_, raw)| parse_endpoint_kind(raw))
+                .unwrap_or(BalanceEndpointKind::None);
+            (platform.to_string(), base, endpoint)
+        });
+
+    let patch_ref = &patch;
+    let override_ref = platform_override.as_ref();
+    let changed = state
+        .update_many(&ids, |entry| {
+            apply_batch_patch(entry, patch_ref, override_ref);
+        })
+        .await;
+
+    if changed == 0 {
+        return Err(CommandError::invalid_input(
+            "没有找到要修改的 Key（可能已被删除）。",
+        ));
+    }
+    state
+        .persist_if_enabled()
+        .await
+        .map_err(CommandError::internal)?;
+
+    Ok(state.entries().await)
+}
+
+/* ---------------------------------------------------------------------------
+ * 命令 10 ~ 13：加密保存
  * ------------------------------------------------------------------------- */
 
 /// 启用加密保存（设置主密码并加密当前列表）。
@@ -862,7 +1029,7 @@ pub async fn key_butler_vault_status(
 }
 
 /* ---------------------------------------------------------------------------
- * 命令 13：余额快照
+ * 命令 14：余额快照
  * ------------------------------------------------------------------------- */
 
 /// 查询某条 Key 的余额快照序列（按时间升序）。
@@ -949,6 +1116,10 @@ mod tests {
             parse_endpoint_kind("builtin-oneapi"),
             BalanceEndpointKind::BuiltinOneapi
         );
+        assert_eq!(
+            parse_endpoint_kind("builtin-deepseek"),
+            BalanceEndpointKind::BuiltinDeepseek
+        );
         assert_eq!(parse_endpoint_kind("custom"), BalanceEndpointKind::Custom);
         assert_eq!(parse_endpoint_kind("none"), BalanceEndpointKind::None);
         assert_eq!(parse_endpoint_kind("随便什么"), BalanceEndpointKind::None);
@@ -978,5 +1149,132 @@ mod tests {
         assert_eq!(error_kind_str(ProbeErrorKind::KeyInvalid), "keyInvalid");
         assert_eq!(error_kind_str(ProbeErrorKind::BaseUrlInvalid), "baseUrlInvalid");
         assert_eq!(error_kind_str(ProbeErrorKind::NetworkTimeout), "networkTimeout");
+    }
+
+    /// 回归：用户实测反馈 —— DeepSeek 的 Key 被识别成了「通用 / OpenAI 兼容」。
+    #[test]
+    fn deepseek_key_is_identified_as_deepseek() {
+        let entry = build_entry("sk-1d84f27e44de4a669ea2d345b7b3ae76");
+        assert_eq!(entry.platform, "deepseek");
+        assert_eq!(entry.balance_endpoint, BalanceEndpointKind::BuiltinDeepseek);
+        assert_eq!(entry.base_url.as_deref(), Some("https://api.deepseek.com/v1"));
+    }
+
+    /// 回归：整批粘贴 16 个 DeepSeek Key，应全部提取为 16 条且都判为 deepseek。
+    #[test]
+    fn pasting_a_batch_of_deepseek_keys_yields_deepseek_entries() {
+        let text = "sk-1d84f27e44de4a669ea2d345b7b3ae76\n\
+                    sk-ddd20b051c644a3dbf8c1470933c5e91\n\
+                    sk-a18d338c462f4e2ebdcbd4e208c7ca40\n\
+                    sk-4713d8179d0f4f4aba278844258c93b0\n\
+                    sk-004572706d26498b86d58a8d9ebbdafe";
+        let keys = extract_keys(text);
+        assert_eq!(keys.len(), 5, "实际：{keys:?}");
+        for key in &keys {
+            assert_eq!(platform::identify(key).platform, "deepseek", "key={key}");
+        }
+    }
+
+    #[test]
+    fn manual_mode_requires_platform() {
+        let mut request = KeyImportRequest {
+            text: "x".into(),
+            mode: KeyImportMode::Manual,
+            platform: None,
+            base_url: None,
+            balance_endpoint: None,
+        };
+        assert!(resolve_manual_config(&request).is_err());
+
+        request.platform = Some("moonshot".into());
+        let (platform, base, endpoint) = resolve_manual_config(&request).unwrap().unwrap();
+        assert_eq!(platform, "moonshot");
+        assert_eq!(base.as_deref(), Some("https://api.moonshot.cn/v1"));
+        assert_eq!(endpoint, BalanceEndpointKind::None);
+
+        // 显式覆盖优先于平台默认值
+        request.base_url = Some("https://my-relay.example.com/v1".into());
+        request.balance_endpoint = Some(BalanceEndpointKind::BuiltinOneapi);
+        let (_, base, endpoint) = resolve_manual_config(&request).unwrap().unwrap();
+        assert_eq!(base.as_deref(), Some("https://my-relay.example.com/v1"));
+        assert_eq!(endpoint, BalanceEndpointKind::BuiltinOneapi);
+    }
+
+    #[test]
+    fn auto_mode_ignores_manual_fields() {
+        let request = KeyImportRequest {
+            text: "x".into(),
+            mode: KeyImportMode::Auto,
+            platform: Some("moonshot".into()),
+            base_url: Some("https://ignored.example.com".into()),
+            balance_endpoint: Some(BalanceEndpointKind::BuiltinOneapi),
+        };
+        assert!(resolve_manual_config(&request).unwrap().is_none());
+    }
+
+    /// 批量补丁：改平台并勾选「套用默认」时，Base URL 与适配器一起换。
+    #[test]
+    fn batch_patch_platform_with_defaults_rewrites_endpoint() {
+        let mut entry = build_entry("sk-abcdefghijklmnopqrst");
+        assert_eq!(entry.platform, "unknown");
+
+        let patch = KeyBatchPatch {
+            platform: Some("deepseek".into()),
+            base_url: None,
+            balance_endpoint: None,
+            note: Some("测试备注".into()),
+            apply_platform_defaults: true,
+        };
+        let platform_override = Some((
+            "deepseek".to_string(),
+            Some("https://api.deepseek.com/v1".to_string()),
+            BalanceEndpointKind::BuiltinDeepseek,
+        ));
+
+        apply_batch_patch(&mut entry, &patch, platform_override.as_ref());
+        assert_eq!(entry.platform, "deepseek");
+        assert_eq!(entry.base_url.as_deref(), Some("https://api.deepseek.com/v1"));
+        assert_eq!(entry.balance_endpoint, BalanceEndpointKind::BuiltinDeepseek);
+        assert_eq!(entry.note, "测试备注");
+    }
+
+    /// 批量补丁：只改平台标签时不碰用户手填的 Base URL。
+    #[test]
+    fn batch_patch_without_defaults_keeps_existing_base_url() {
+        let mut entry = build_entry("sk-ant-api03-abcdefghijklmn");
+        let original = entry.base_url.clone();
+
+        let patch = KeyBatchPatch {
+            platform: Some("deepseek".into()),
+            base_url: None,
+            balance_endpoint: None,
+            note: None,
+            apply_platform_defaults: false,
+        };
+        let platform_override = Some((
+            "deepseek".to_string(),
+            Some("https://api.deepseek.com/v1".to_string()),
+            BalanceEndpointKind::BuiltinDeepseek,
+        ));
+
+        apply_batch_patch(&mut entry, &patch, platform_override.as_ref());
+        assert_eq!(entry.platform, "deepseek");
+        assert_eq!(entry.base_url, original, "未勾选「套用默认」时不应改动 Base URL");
+        assert_eq!(entry.balance_endpoint, BalanceEndpointKind::None);
+    }
+
+    /// 批量补丁：Base URL 传空白串表示清空。
+    #[test]
+    fn batch_patch_blank_base_url_clears_it() {
+        let mut entry = build_entry("sk-ant-api03-abcdefghijklmn");
+        let patch = KeyBatchPatch {
+            platform: None,
+            base_url: Some("   ".into()),
+            balance_endpoint: None,
+            note: None,
+            apply_platform_defaults: false,
+        };
+        apply_batch_patch(&mut entry, &patch, None);
+        assert_eq!(entry.base_url, None);
     }
 }
