@@ -157,13 +157,28 @@ const summaryText = computed(() => {
     <NAlert
       v-if="store.isLocked"
       class="mx-3 mt-2 shrink-0"
-      type="warning"
+      :type="store.vault.systemKey ? 'error' : 'warning'"
       :bordered="false"
-      title="加密保存已启用，但当前未解锁"
+      :title="
+        store.vault.systemKey
+          ? '本机保存的数据无法在当前 Windows 账户下解开'
+          : '本地保存已启用，但当前未解锁'
+      "
     >
       <div class="flex items-center justify-between text-[11px]">
-        <span>解锁后才能看到 Key 列表并继续导入 / 检测。</span>
-        <NButton size="tiny" type="warning" ghost @click="showVault = true">输入主密码解锁</NButton>
+        <span v-if="store.vault.systemKey">
+          这份数据是「无密码保存」创建的，密钥绑定到创建时的 Windows 账户 ——
+          换账户或换电脑后就解不开了，没有密码可以输入。
+        </span>
+        <span v-else>解锁后才能看到 Key 列表并继续导入 / 检测。</span>
+        <NButton
+          size="tiny"
+          :type="store.vault.systemKey ? 'error' : 'warning'"
+          ghost
+          @click="showVault = true"
+        >
+          {{ store.vault.systemKey ? '查看说明' : '输入主密码解锁' }}
+        </NButton>
       </div>
     </NAlert>
 

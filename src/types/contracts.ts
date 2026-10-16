@@ -523,6 +523,8 @@ export const COMMAND_NAMES = {
   KEY_BUTLER_UPDATE_MANY: 'key_butler_update_many',
   /** 启用加密保存（设主密码并加密现有列表） */
   KEY_BUTLER_VAULT_ENABLE: 'key_butler_vault_enable',
+  /** 启用本地保存（无密码模式：随机数据密钥 + Windows DPAPI，磁盘上仍是密文） */
+  KEY_BUTLER_VAULT_ENABLE_SYSTEM: 'key_butler_vault_enable_system',
   /** 用主密码解锁已有密文库 */
   KEY_BUTLER_VAULT_UNLOCK: 'key_butler_vault_unlock',
   /** 关闭加密保存（清空本地密文） */
@@ -734,7 +736,7 @@ export interface KeyCheckSummary {
 }
 
 /**
- * 加密保存（vault）状态。
+ * 本地保存（vault）状态。
  * 对应 Rust 结构体：`key_butler::models::VaultStatus`
  */
 export interface VaultStatus {
@@ -744,6 +746,14 @@ export interface VaultStatus {
   unlocked: boolean
   /** 当前内存中的 Key 条数 */
   entryCount: number
+  /**
+   * 是否使用「无密码保存」：数据密钥由 Windows DPAPI 绑定当前账户，启动时自动解开。
+   * **磁盘上依然是 AES-256-GCM 密文，不是明文。**
+   *
+   * `enabled && !unlocked && systemKey` 表示「这份数据属于别的 Windows 账户
+   * 或另一台电脑」，需要与「等待输入主密码」区分开。
+   */
+  systemKey: boolean
 }
 
 /**

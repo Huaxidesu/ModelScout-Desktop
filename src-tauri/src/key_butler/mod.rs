@@ -9,10 +9,11 @@
  *
  * 【子模块规划】
  *   - `models`    数据契约（阶段 0 已落地，与前端 contracts.ts 一一对应）
- *   - `platform`  前缀 → 平台映射（长前缀优先，用户可覆盖扩充）
- *   - `balance`   余额查询适配器（builtin-oneapi / none / custom）
+ *   - `platform`  平台规则表（正则优先、长前缀优先，用户可覆盖扩充）
+ *   - `balance`   余额查询适配器（builtin-oneapi / builtin-deepseek / none / custom）
  *   - `classify`  四态分类判定
- *   - `vault`     Key 内存表 + 可选加密持久化（argon2id + AES-256-GCM）
+ *   - `vault`     Key 内存表 + 可选加密持久化（argon2id 主密码 或 DPAPI 系统密钥）
+ *   - `dpapi`     Windows DPAPI 封装（供「无密码保存」包裹数据密钥）
  *   - `snapshots` 余额历史快照
  *   - `commands`  `key_butler_*` 命令层（在 lib.rs 的 generate_handler! 注册）
  *
@@ -27,6 +28,7 @@
 pub mod balance;
 pub mod classify;
 pub mod commands;
+pub mod dpapi;
 pub mod models;
 pub mod platform;
 pub mod snapshots;

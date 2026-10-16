@@ -4,7 +4,7 @@ name = "modelscout"
 #   - tauri.conf.json 的 "version": "../package.json" 会在构建/打包时读取它并覆盖此处的值；
 #   - 这里仅作为 crate 元数据（cargo 语法必需），升级版本号时请只改 package.json，
 #     并在发布前运行 `cargo build` 让 Cargo.lock 自动同步此字段。
-version = "0.2.3"
+version = "0.2.4"
 description = "ModelScout —— 大模型 API 探测与配置生成桌面应用"
 authors = ["Huaxidesu"]
 # PolyForm Noncommercial 1.0.0：允许非商业用途下的使用、修改与分发。
@@ -90,6 +90,9 @@ windows-sys = { version = "0.61", features = [
     # 读取 Windows 凭据管理器的通用凭据（CredReadW / CredFree），
     # 供「API Key 从凭据管理器读取」这一可选功能使用（见 src/credential.rs）。
     "Win32_Security_Credentials",
+    # DPAPI（CryptProtectData / CryptUnprotectData）：给 Key 管家的「无密码保存」
+    # 包裹数据密钥，使磁盘上不出现明文（见 src/key_butler/dpapi.rs）。
+    "Win32_Security_Cryptography",
     # 运行期隐藏调试构建的控制台窗口（GetConsoleWindow），见 lib.rs。
     "Win32_System_Console",
 ] }

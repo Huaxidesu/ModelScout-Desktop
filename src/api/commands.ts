@@ -278,6 +278,16 @@ export function keyButlerVaultEnable(password: string): Promise<VaultStatus> {
   return call<VaultStatus>(COMMAND_NAMES.KEY_BUTLER_VAULT_ENABLE, { password })
 }
 
+/**
+ * 启用本地保存（无密码模式）。
+ *
+ * 用户不需要输入任何东西，但磁盘上仍然是 AES-256-GCM 密文 ——
+ * 「无密码」靠的是把随机数据密钥用 Windows DPAPI 绑到当前账户上。
+ */
+export function keyButlerVaultEnableSystem(): Promise<VaultStatus> {
+  return call<VaultStatus>(COMMAND_NAMES.KEY_BUTLER_VAULT_ENABLE_SYSTEM)
+}
+
 /** 用主密码解锁已有密文库。 */
 export function keyButlerVaultUnlock(password: string): Promise<VaultStatus> {
   return call<VaultStatus>(COMMAND_NAMES.KEY_BUTLER_VAULT_UNLOCK, { password })

@@ -169,8 +169,13 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
 
   /** 脱敏 Key 列表（后端保证不含明文） */
   const entries = ref<KeyEntry[]>([])
-  /** 加密保存状态 */
-  const vault = ref<VaultStatus>({ enabled: false, unlocked: false, entryCount: 0 })
+  /** 本地保存状态 */
+  const vault = ref<VaultStatus>({
+    enabled: false,
+    unlocked: false,
+    entryCount: 0,
+    systemKey: false,
+  })
   /** 首次加载中 */
   const loading = ref(false)
   /** 批量检测进行中 */
@@ -500,9 +505,15 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     return keyButlerSnapshots(keyId)
   }
 
-  /** 启用加密保存。 */
+  /** 启用加密保存（主密码模式）。 */
   async function enableVault(password: string): Promise<void> {
     vault.value = await keyButlerVaultEnable(password)
+    entries.value = await keyButlerList()
+  }
+
+  /** 启用本地保存（无密码模式：数据密钥由 Windows DPAPI 保护）。 */
+  async function enableVaultSystemKey(): Promise<void> {
+    vault.value = await keyButlerVaultEnableSystem()
     entries.value = await keyButlerList()
   }
 
@@ -568,6 +579,7 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     reveal,
     loadSnapshots,
     enableVault,
+    enableVaultSystemKey,
     unlockVault,
     disableVault,
     reset,

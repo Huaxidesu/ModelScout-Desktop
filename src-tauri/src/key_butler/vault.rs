@@ -6,13 +6,27 @@
  * 【安全模型（任务书第四节）】
  *   1. **默认不持久化**：不启用加密保存时，任何操作都**不写盘**，
  *      关闭应用即清空（只有余额快照是例外，它不含明文）。
- *   2. **加密保存需手动启用**并设置主密码：
- *      argon2id(m=19456, t=2, p=1) 派生 32 字节密钥 → AES-256-GCM 加密，
- *      密文写入 `{app_data_dir}/key_butler/vault.json`。
- *   3. 主密码**不可找回**。派生密钥在解锁期间缓存在内存里（否则每次改动
+ *   2. **加密保存需手动启用**，两种模式二选一，**两种都是加密落盘**：
+ *      a) **主密码模式**：argon2id(m=19456, t=2, p=1) 由用户主密码派生
+ *         32 字节数据密钥 → AES-256-GCM 加密，启动后需输入主密码解锁。
+ *      b) **无密码模式（系统密钥）**：随机生成 32 字节数据密钥，用 Windows
+ *         DPAPI 包裹后存进密文库 → 同样走 AES-256-GCM。启动时自动解开，
+ *         用户无需输入任何东西，但**磁盘上依然没有明文**（见 `dpapi.rs`）。
+ *      密文都写入 `{app_data_dir}/key_butler/vault.json`。
+ *   3. 主密码**不可找回**。数据密钥在解锁期间缓存在内存里（否则每次改动
  *      都要重新输入密码），关闭加密保存或进程退出即清零。
  *      主密码字符串本身在派生完成后立即 `zeroize`。
  *   4. 明文 Key 只存在于本模块的 `StoredKey` 里，`KeyEntry` 只带脱敏串。
+ *
+ * 【无密码模式不等于明文（本模块的一条硬约束）】
+ *   「用户不用输密码」和「磁盘上可以存明文」是两件事。前者靠 DPAPI 把
+ *   数据密钥绑到当前 Windows 账户上实现；文件里始终只有 AES-256-GCM 密文。
+ *   任何把它简化成「直接写 JSON 明文」的改动都是错的。
+ *
+ * 【两种模式在磁盘上怎么区分】
+ *   `VaultFile.kdf` 兼作模式判别：`argon2id`（主密码）/ `dpapi`（系统密钥）。
+ *   差别只有一个 —— **数据密钥从哪来** —— 用一个字段表达即可，
+ *   不必再加一套枚举与版本迁移。
  *
  * 【锁定态的行为】
  * 密文库已启用但未解锁时，内存表是空的。此时**拒绝**一切写操作
@@ -36,6 +50,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::key_butler::dpapi;
 use crate::key_butler::models::{KeyCheckSummary, KeyEntry, KeyStatus, Snapshot, VaultStatus};
 use crate::key_butler::snapshots::{SnapshotStore, MAX_PER_KEY};
 
@@ -55,6 +70,11 @@ const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 /// 主密码最短长度。
 pub const MIN_PASSWORD_LEN: usize = 8;
+
+/// 主密码模式在 `VaultFile.kdf` 里的取值。
+const KDF_ARGON2ID: &str = "argon2id";
+/// 无密码（系统密钥）模式在 `VaultFile.kdf` 里的取值。
+const KDF_DPAPI: &str = "dpapi";
 
 /* ---------------------------------------------------------------------------
  * 脱敏
@@ -113,23 +133,42 @@ impl Drop for StoredKey {
  * ------------------------------------------------------------------------- */
 
 /// 磁盘上的密文库。
+///
+/// `kdf` 兼作模式判别（`argon2id` / `dpapi`）；两种模式共用的字段是
+/// `nonce` + `ciphertext`，其余按模式二选一填写。旧文件（只有 argon2id 形态）
+/// 仍然能解析 —— 新增的字段都带 `#[serde(default)]`。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct VaultFile {
     /// 文件格式版本
     version: u32,
-    /// 密钥派生算法标识（当前只有 argon2id）
+    /// 解锁方式：`argon2id`（主密码派生）/ `dpapi`（系统密钥，无需输入）
     kdf: String,
     /// argon2id 参数（写进文件，便于将来调参后仍能解密旧文件）
+    #[serde(default)]
     m: u32,
+    #[serde(default)]
     t: u32,
+    #[serde(default)]
     p: u32,
-    /// 盐（base64）
+    /// 盐（base64）；仅主密码模式使用
+    #[serde(default)]
     salt: String,
+    /// 系统密钥模式：被 DPAPI 包裹的数据密钥（base64）。落盘时原样写回。
+    #[serde(default)]
+    wrapped_key: Option<String>,
     /// nonce（base64）—— **每次加密都重新生成**
     nonce: String,
     /// 密文（base64）
     ciphertext: String,
+}
+
+/// 写盘时数据密钥的来源，决定文件里写哪些「密钥元数据」字段。
+enum KeySource<'a> {
+    /// 主密码模式：写 argon2id 参数与盐
+    Password { salt: &'a [u8] },
+    /// 系统密钥模式：写 DPAPI 包裹后的数据密钥
+    SystemKey { wrapped: &'a str },
 }
 
 /// 明文载荷。
@@ -244,12 +283,30 @@ impl CheckRun {
  * 应用状态
  * ------------------------------------------------------------------------- */
 
+/// 密文库当前使用的解锁方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VaultMode {
+    /// 未启用本地保存
+    Off,
+    /// 主密码派生（argon2id）：启动后必须由用户输入主密码
+    Password,
+    /// 系统密钥（DPAPI）：启动时自动解开，用户无需输入
+    SystemKey,
+}
+
 /// 内部可变状态。
 struct Inner {
     /// 内存表（锁定态或未启用时可能是空表）
     keys: Vec<StoredKey>,
-    /// 解锁后缓存的派生密钥；未解锁 / 未启用时为 `None`
+    /// 解锁后缓存的数据密钥；未解锁 / 未启用时为 `None`
     derived: Option<Zeroizing<[u8; KEY_LEN]>>,
+    /// 当前密文库的解锁方式
+    mode: VaultMode,
+    /// 系统密钥模式下 DPAPI 包裹后的数据密钥（base64）。
+    ///
+    /// 落盘时原样写回即可 —— DPAPI 每次输出的密文都不同，反复重新包裹没有
+    /// 任何安全增益，只会让每次保存都多一次系统调用。
+    wrapped_key: Option<String>,
 }
 
 impl Inner {
@@ -257,12 +314,21 @@ impl Inner {
         Self {
             keys: Vec::new(),
             derived: None,
+            mode: VaultMode::Off,
+            wrapped_key: None,
         }
     }
 
     /// 当前会话是否已解锁。
     fn unlocked(&self) -> bool {
         self.derived.is_some()
+    }
+
+    /// 清掉与「已解锁」相关的一切状态。
+    fn clear_unlock_state(&mut self) {
+        self.derived = None;
+        self.mode = VaultMode::Off;
+        self.wrapped_key = None;
     }
 }
 
@@ -413,12 +479,17 @@ impl KeyButlerState {
     }
 
     /// 当前状态。
+    ///
+    /// `system_key` 在**未解锁**时也可能为 `true`（文件是 dpapi 模式但当前
+    /// Windows 账户解不开）—— 前端据此区分「等主密码」与「这份数据根本
+    /// 不属于当前账户」，给出不同的引导。
     pub async fn status(&self) -> VaultStatus {
         let inner = self.inner.lock().await;
         VaultStatus {
             enabled: self.enabled_on_disk(),
             unlocked: inner.unlocked(),
             entry_count: inner.keys.len(),
+            system_key: inner.mode == VaultMode::SystemKey,
         }
     }
 
@@ -523,13 +594,13 @@ impl KeyButlerState {
 
     /* ---------------------- 加密保存 ---------------------- */
 
-    /// 启用加密保存：用当前内存表加密落盘。
+    /// 启用加密保存（主密码模式）：用当前内存表加密落盘。
     pub async fn enable(&self, password: &str) -> Result<VaultStatus, String> {
         if password.chars().count() < MIN_PASSWORD_LEN {
             return Err(format!("主密码至少需要 {MIN_PASSWORD_LEN} 个字符。"));
         }
         if self.enabled_on_disk() {
-            return Err("加密保存已经启用。如需更换主密码，请先关闭再重新启用。".to_string());
+            return Err("本地保存已经启用。如需更换方式，请先关闭再重新启用。".to_string());
         }
         let paths = self.paths()?.clone();
 
@@ -544,27 +615,80 @@ impl KeyButlerState {
             version: 1,
             keys: inner.keys.clone(),
         };
-        write_vault(&paths.vault, &payload, &derived, &salt)?;
+        write_vault(&paths.vault, &payload, &derived, KeySource::Password { salt: &salt })?;
         inner.derived = Some(Zeroizing::new(derived));
+        inner.mode = VaultMode::Password;
+        inner.wrapped_key = None;
 
         Ok(VaultStatus {
             enabled: true,
             unlocked: true,
             entry_count: inner.keys.len(),
+            system_key: false,
         })
     }
 
-    /// 用主密码解锁已有密文库。
+    /// 启用加密保存（无密码模式）：随机数据密钥 + DPAPI 包裹。
+    ///
+    /// **磁盘上依然是 AES-256-GCM 密文**，只是数据密钥不再由用户口令派生，
+    /// 而是随机生成后用 Windows DPAPI 绑到当前登录账户上。
+    /// 因此启动时无需用户输入即可自动解开（见 `auto_unlock_system_key`）。
+    pub async fn enable_system_key(&self) -> Result<VaultStatus, String> {
+        if self.enabled_on_disk() {
+            return Err("本地保存已经启用。如需更换方式，请先关闭再重新启用。".to_string());
+        }
+        let paths = self.paths()?.clone();
+
+        // 随机数据密钥（与主密码模式同长度、同一套 AES-256-GCM 路径）
+        let mut key_bytes = Zeroizing::new([0u8; KEY_LEN]);
+        getrandom::getrandom(&mut *key_bytes).map_err(|err| format!("随机数生成失败：{err}"))?;
+
+        // 用系统密钥包一层；失败（非 Windows / 系统异常）就直接报错，
+        // **绝不退化成明文落盘**。
+        let wrapped = dpapi::protect(&*key_bytes)?;
+        let wrapped_b64 = BASE64.encode(&wrapped);
+
+        let mut inner = self.inner.lock().await;
+        let payload = VaultPayload {
+            version: 1,
+            keys: inner.keys.clone(),
+        };
+        write_vault(
+            &paths.vault,
+            &payload,
+            &key_bytes,
+            KeySource::SystemKey { wrapped: &wrapped_b64 },
+        )?;
+
+        inner.derived = Some(Zeroizing::new(*key_bytes));
+        inner.mode = VaultMode::SystemKey;
+        inner.wrapped_key = Some(wrapped_b64);
+
+        Ok(VaultStatus {
+            enabled: true,
+            unlocked: true,
+            entry_count: inner.keys.len(),
+            system_key: true,
+        })
+    }
+
+    /// 用主密码解锁已有密文库（主密码模式）。
     pub async fn unlock(&self, password: &str) -> Result<VaultStatus, String> {
         let paths = self.paths()?.clone();
         if !paths.vault.exists() {
-            return Err("尚未启用加密保存，无需解锁。".to_string());
+            return Err("尚未启用本地保存，无需解锁。".to_string());
         }
 
         let text = std::fs::read_to_string(&paths.vault)
             .map_err(|err| format!("读取密文库失败：{err}"))?;
         let file: VaultFile =
             serde_json::from_str(&text).map_err(|err| format!("密文库格式损坏：{err}"))?;
+
+        if file.kdf == KDF_DPAPI {
+            return Err("这份数据是「无密码保存」，不需要主密码；\
+                        若它解不开，通常是因为换了 Windows 账户或换了电脑。"
+                .to_string());
+        }
 
         let salt = BASE64
             .decode(file.salt.as_bytes())
@@ -580,15 +704,75 @@ impl KeyButlerState {
         let mut inner = self.inner.lock().await;
         inner.keys = payload.keys;
         inner.derived = Some(Zeroizing::new(derived));
+        inner.mode = VaultMode::Password;
+        inner.wrapped_key = None;
 
         Ok(VaultStatus {
             enabled: true,
             unlocked: true,
             entry_count: inner.keys.len(),
+            system_key: false,
         })
     }
 
-    /// 关闭加密保存：删除密文文件（内存表保留，用户还在用）。
+    /// 尝试自动解锁「无密码模式」的密文库 —— 不需要用户输入任何东西。
+    ///
+    /// # 返回
+    /// - `Ok(true)`  已解开
+    /// - `Ok(false)` 不适用（未启用 / 已解锁 / 是主密码模式）
+    /// - `Err(..)`   确实是 dpapi 模式但解不开（换了账户 / 换了机器 / 文件损坏）
+    ///
+    /// **解不开时也会把 `mode` 标成 `SystemKey`** —— 这样 `status()` 能告诉
+    /// 前端「这是一份不属于当前账户的数据」，而不是让用户对着一个永远输不对
+    /// 的主密码框发呆。
+    pub async fn auto_unlock_system_key(&self) -> Result<bool, String> {
+        let paths = self.paths()?.clone();
+        {
+            let inner = self.inner.lock().await;
+            if inner.unlocked() || !self.enabled_on_disk() {
+                return Ok(false);
+            }
+        }
+
+        let text = std::fs::read_to_string(&paths.vault)
+            .map_err(|err| format!("读取密文库失败：{err}"))?;
+        let file: VaultFile =
+            serde_json::from_str(&text).map_err(|err| format!("密文库格式损坏：{err}"))?;
+
+        // 主密码模式：这正是它存在的意义，绝不能被自动绕过
+        if file.kdf != KDF_DPAPI {
+            return Ok(false);
+        }
+
+        let wrapped = file
+            .wrapped_key
+            .clone()
+            .ok_or_else(|| "密文库缺少系统密钥字段，无法自动解锁。".to_string())?;
+        {
+            let mut inner = self.inner.lock().await;
+            inner.mode = VaultMode::SystemKey;
+            inner.wrapped_key = Some(wrapped.clone());
+        }
+
+        let blob = BASE64
+            .decode(wrapped.as_bytes())
+            .map_err(|_| "密文库里的系统密钥不是合法的 base64。".to_string())?;
+        let raw = Zeroizing::new(dpapi::unprotect(&blob)?);
+        if raw.len() != KEY_LEN {
+            return Err("系统密钥长度异常，密文库可能已损坏。".to_string());
+        }
+        let mut key_bytes = Zeroizing::new([0u8; KEY_LEN]);
+        key_bytes.copy_from_slice(&raw);
+
+        let payload = read_payload(&file, &key_bytes)?;
+
+        let mut inner = self.inner.lock().await;
+        inner.keys = payload.keys;
+        inner.derived = Some(key_bytes);
+        Ok(true)
+    }
+
+    /// 关闭本地保存：删除密文文件（内存表保留，用户还在用）。
     pub async fn disable(&self) -> Result<VaultStatus, String> {
         let paths = self.paths()?.clone();
         if paths.vault.exists() {
@@ -596,13 +780,14 @@ impl KeyButlerState {
                 .map_err(|err| format!("删除密文库失败：{err}"))?;
         }
         let mut inner = self.inner.lock().await;
-        // 派生密钥用后即清
-        inner.derived = None;
+        // 数据密钥用后即清
+        inner.clear_unlock_state();
 
         Ok(VaultStatus {
             enabled: false,
             unlocked: false,
             entry_count: inner.keys.len(),
+            system_key: false,
         })
     }
 
@@ -625,10 +810,28 @@ impl KeyButlerState {
             version: 1,
             keys: inner.keys.clone(),
         };
-        let salt = random_bytes(SALT_LEN)?;
-        // 复制一份派生密钥用于本次加密；副本随作用域结束自动清零
+        // 复制一份数据密钥用于本次加密；副本随作用域结束自动清零
         let key_copy = Zeroizing::new(**derived);
-        write_vault(&paths.vault, &payload, &key_copy, &salt)
+
+        match inner.mode {
+            VaultMode::SystemKey => {
+                let wrapped = inner
+                    .wrapped_key
+                    .clone()
+                    .ok_or_else(|| "系统密钥丢失，无法重新落盘。".to_string())?;
+                write_vault(
+                    &paths.vault,
+                    &payload,
+                    &key_copy,
+                    KeySource::SystemKey { wrapped: &wrapped },
+                )
+            }
+            // 主密码模式（以及理论上的 Off 兜底）：每次换新盐
+            _ => {
+                let salt = random_bytes(SALT_LEN)?;
+                write_vault(&paths.vault, &payload, &key_copy, KeySource::Password { salt: &salt })
+            }
+        }
     }
 
     /* ---------------------- 检测运行 ---------------------- */
@@ -704,12 +907,15 @@ fn derive_key(
     Ok(out)
 }
 
-/// 用派生密钥加密载荷并写入文件。
+/// 用数据密钥加密载荷并写入文件。
+///
+/// `source` 决定「密钥元数据」怎么写（主密码模式写盐，系统密钥模式写
+/// DPAPI 包裹后的密钥）；载荷本身的加密路径两种模式完全一致。
 fn write_vault(
     path: &Path,
     payload: &VaultPayload,
     key: &[u8; KEY_LEN],
-    salt: &[u8],
+    source: KeySource<'_>,
 ) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
@@ -728,13 +934,33 @@ fn write_vault(
         .encrypt(nonce, plaintext.as_ref())
         .map_err(|_| "加密失败。".to_string())?;
 
+    let (kdf, m, t, p, salt, wrapped_key) = match source {
+        KeySource::Password { salt } => (
+            KDF_ARGON2ID.to_string(),
+            ARGON2_M_COST,
+            ARGON2_T_COST,
+            ARGON2_P_COST,
+            BASE64.encode(salt),
+            None,
+        ),
+        KeySource::SystemKey { wrapped } => (
+            KDF_DPAPI.to_string(),
+            0,
+            0,
+            0,
+            String::new(),
+            Some(wrapped.to_string()),
+        ),
+    };
+
     let file = VaultFile {
         version: 1,
-        kdf: "argon2id".to_string(),
-        m: ARGON2_M_COST,
-        t: ARGON2_T_COST,
-        p: ARGON2_P_COST,
-        salt: BASE64.encode(salt),
+        kdf,
+        m,
+        t,
+        p,
+        salt,
+        wrapped_key,
         nonce: BASE64.encode(&nonce_bytes),
         ciphertext: BASE64.encode(&ciphertext),
     };
@@ -944,6 +1170,124 @@ mod tests {
         assert!(!path.exists(), "关闭后密文文件应被删除");
         // 内存表保留，用户还在用
         assert_eq!(state.entries().await.len(), 1);
+    }
+
+    /* ---------------------- 无密码模式（系统密钥） ---------------------- */
+
+    #[tokio::test]
+    async fn system_key_mode_roundtrips_without_password() {
+        let state = temp_state("syskey");
+        state
+            .insert(vec![StoredKey::new(
+                "sk-syskey-secret-value".to_string(),
+                sample_entry("id-1", "sk-sy***alue"),
+            )])
+            .await;
+
+        let status = state.enable_system_key().await.expect("启用应成功");
+        assert!(status.enabled && status.unlocked && status.system_key);
+
+        // 模拟重启：换一个全新状态，不输入任何东西就应能自动解开
+        let reopened = KeyButlerState::new();
+        reopened.configure(&state.paths().unwrap().vault.parent().unwrap().parent().unwrap());
+        assert!(
+            reopened.auto_unlock_system_key().await.expect("自动解锁应成功"),
+            "系统密钥库应当被自动解锁"
+        );
+        assert_eq!(
+            reopened.reveal("id-1").await.as_deref(),
+            Some("sk-syskey-secret-value")
+        );
+        let after = reopened.status().await;
+        assert!(after.unlocked && after.system_key);
+    }
+
+    /// 「无密码」不等于「明文」—— 这是本模块的硬约束，用测试钉住。
+    #[tokio::test]
+    async fn system_key_vault_file_contains_no_plaintext() {
+        let state = temp_state("syskey-plain");
+        let secret = "sk-1d84f27e44de4a669ea2d345b7b3ae76";
+        state
+            .insert(vec![StoredKey::new(
+                secret.to_string(),
+                sample_entry("id-1", "sk-1d***ae76"),
+            )])
+            .await;
+        state.enable_system_key().await.unwrap();
+
+        let text = std::fs::read_to_string(state.paths().unwrap().vault.clone()).unwrap();
+        assert!(!text.contains(secret), "密文库中不得出现 Key 明文");
+        assert!(text.contains("\"kdf\": \"dpapi\""), "应记录为 dpapi 模式：{text}");
+        assert!(text.contains("\"wrappedKey\""), "应包含被 DPAPI 包裹的密钥");
+    }
+
+    #[tokio::test]
+    async fn password_unlock_rejects_system_key_vault() {
+        let state = temp_state("syskey-pwreject");
+        state
+            .insert(vec![StoredKey::new(
+                "sk-syskey-only".to_string(),
+                sample_entry("id-1", "sk-sy***only"),
+            )])
+            .await;
+        state.enable_system_key().await.unwrap();
+
+        let reopened = KeyButlerState::new();
+        reopened.configure(&state.paths().unwrap().vault.parent().unwrap().parent().unwrap());
+        let err = reopened.unlock("some password").await.unwrap_err();
+        assert!(err.contains("无密码"), "应提示这是无密码保存，实际：{err}");
+    }
+
+    /// 主密码库绝不能被自动解锁 —— 那正是主密码存在的意义。
+    #[tokio::test]
+    async fn auto_unlock_skips_password_vault() {
+        let state = temp_state("autoskip");
+        state
+            .insert(vec![StoredKey::new(
+                "sk-password-protected".to_string(),
+                sample_entry("id-1", "sk-pa***cted"),
+            )])
+            .await;
+        state.enable("correct horse battery").await.unwrap();
+
+        let reopened = KeyButlerState::new();
+        reopened.configure(&state.paths().unwrap().vault.parent().unwrap().parent().unwrap());
+        assert!(
+            !reopened.auto_unlock_system_key().await.unwrap(),
+            "主密码库不应被自动解锁"
+        );
+        let status = reopened.status().await;
+        assert!(status.enabled && !status.unlocked && !status.system_key);
+    }
+
+    #[tokio::test]
+    async fn system_key_vault_persists_across_writes() {
+        let state = temp_state("syskey-persist");
+        state
+            .insert(vec![StoredKey::new(
+                "sk-first".to_string(),
+                sample_entry("id-1", "sk-fi***irst"),
+            )])
+            .await;
+        state.enable_system_key().await.unwrap();
+
+        // 再导入一条并落盘：应继续用系统密钥模式，而不是退回主密码模式
+        state
+            .insert(vec![StoredKey::new(
+                "sk-second".to_string(),
+                sample_entry("id-2", "sk-se***cond"),
+            )])
+            .await;
+        state.persist_if_enabled().await.unwrap();
+
+        let text = std::fs::read_to_string(state.paths().unwrap().vault.clone()).unwrap();
+        assert!(text.contains("\"kdf\": \"dpapi\""), "模式不应被写坏：{text}");
+
+        let reopened = KeyButlerState::new();
+        reopened.configure(&state.paths().unwrap().vault.parent().unwrap().parent().unwrap());
+        assert!(reopened.auto_unlock_system_key().await.unwrap());
+        assert_eq!(reopened.entries().await.len(), 2);
+        assert_eq!(reopened.reveal("id-2").await.as_deref(), Some("sk-second"));
     }
 
     fn sample_snapshot(key_id: &str, ts: u64) -> Snapshot {

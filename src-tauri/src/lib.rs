@@ -163,7 +163,7 @@ pub fn run() {
             commands::get_probe_state,    // 5. 查询实时快照
             commands::save_config_file,   // 6. 导出配置到磁盘
             commands::get_dictionary_info, // 7. 字典自检（辅助）
-            // ---- Key 管家（Beta）：14 个命令 ----
+            // ---- Key 管家（Beta）：15 个命令 ----
             // 函数名必须与前端 COMMAND_NAMES.KEY_BUTLER_* 的字符串值逐字一致
             key_butler::commands::key_butler_import,
             key_butler::commands::key_butler_check,
@@ -175,6 +175,7 @@ pub fn run() {
             key_butler::commands::key_butler_set_config,
             key_butler::commands::key_butler_update_many,
             key_butler::commands::key_butler_vault_enable,
+            key_butler::commands::key_butler_vault_enable_system,
             key_butler::commands::key_butler_vault_unlock,
             key_butler::commands::key_butler_vault_disable,
             key_butler::commands::key_butler_vault_status,

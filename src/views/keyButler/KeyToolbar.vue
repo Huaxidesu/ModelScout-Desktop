@@ -37,13 +37,20 @@ const STATUS_OPTIONS: Array<{ label: string; value: KeyStatus }> = [
   { label: '查询失败', value: 'error' },
 ]
 
-/** 加密保存按钮的文案与类型 */
+/** 本地保存按钮的文案与类型 */
 const vaultMeta = computed(() => {
   if (!store.vault.enabled) {
-    return { text: '启用本地保存 🔒', type: 'default' as const, hint: '默认不保存：关闭应用即清空。启用后会用主密码加密写入本机。' }
+    return { text: '启用本地保存 🔒', type: 'default' as const, hint: '默认不保存：关闭应用即清空。启用后会用主密码或 Windows 账户密钥加密写入本机。' }
   }
   if (!store.vault.unlocked) {
+    // 系统密钥模式解不开：换账户 / 换电脑，输密码也没用
+    if (store.vault.systemKey) {
+      return { text: '本地数据无法解开', type: 'error' as const, hint: '这份数据由别的 Windows 账户创建，当前账户解不开。点此查看说明。' }
+    }
     return { text: '已加密 · 待解锁', type: 'warning' as const, hint: '密文库已存在但当前未解锁，点此输入主密码。' }
+  }
+  if (store.vault.systemKey) {
+    return { text: '已保存 · 无密码', type: 'info' as const, hint: '数据仍是加密的（AES-256-GCM），加密密钥由 Windows 数据保护接口绑定当前账户，所以不用输密码；换账户或换电脑后无法恢复。' }
   }
   return { text: '已加密 · 已解锁', type: 'success' as const, hint: 'Key 已用主密码加密保存在本机，改动会即时重新加密落盘。' }
 })

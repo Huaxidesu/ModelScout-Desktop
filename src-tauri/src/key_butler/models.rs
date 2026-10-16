@@ -387,7 +387,7 @@ pub struct KeyBatchPatch {
     pub apply_platform_defaults: bool,
 }
 
-/// 加密保存（vault）的当前状态。
+/// 本地保存（vault）的当前状态。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultStatus {
@@ -397,6 +397,12 @@ pub struct VaultStatus {
     pub unlocked: bool,
     /// 当前内存中的 Key 条数
     pub entry_count: usize,
+    /// 是否使用「无密码保存」：数据密钥由 Windows DPAPI 绑定当前账户，
+    /// 启动时自动解开。**磁盘上依然是 AES-256-GCM 密文，不是明文。**
+    ///
+    /// 注意：`enabled && !unlocked && systemKey` 表示「这份数据属于别的
+    /// Windows 账户或另一台电脑」，前端要给出与「等待输入主密码」不同的引导。
+    pub system_key: bool,
 }
 
 /* ---------------------------------------------------------------------------

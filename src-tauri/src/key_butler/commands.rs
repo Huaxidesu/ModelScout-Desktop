@@ -4,7 +4,7 @@
  * ============================================================================
  *
  * 【职责】
- * 把 Key 管家的能力暴露为 14 个 `key_butler_*` 命令。
+ * 把 Key 管家的能力暴露为 15 个 `key_butler_*` 命令。
  * 命令名必须与前端 `COMMAND_NAMES.KEY_BUTLER_*` 的字符串值逐字一致
  * （`scripts/cross_check.py` 会把 `generate_handler!` 里的函数名与前端常量比对）。
  *
@@ -985,10 +985,10 @@ pub async fn key_butler_update_many(
 }
 
 /* ---------------------------------------------------------------------------
- * 命令 10 ~ 13：加密保存
+ * 命令 10 ~ 14：本地保存（加密 / 无密码）
  * ------------------------------------------------------------------------- */
 
-/// 启用加密保存（设置主密码并加密当前列表）。
+/// 启用本地保存（主密码模式）：设置主密码并加密当前列表。
 #[tauri::command]
 pub async fn key_butler_vault_enable(
     state: State<'_, KeyButlerState>,
@@ -996,6 +996,20 @@ pub async fn key_butler_vault_enable(
 ) -> Result<VaultStatus, CommandError> {
     state
         .enable(&password)
+        .await
+        .map_err(CommandError::invalid_input)
+}
+
+/// 启用本地保存（无密码模式）：随机数据密钥 + Windows DPAPI 包裹。
+///
+/// 用户不需要输入任何东西，但**落盘的仍然是 AES-256-GCM 密文** ——
+/// 「无密码」靠的是把数据密钥绑到当前 Windows 账户，不是放弃加密。
+#[tauri::command]
+pub async fn key_butler_vault_enable_system(
+    state: State<'_, KeyButlerState>,
+) -> Result<VaultStatus, CommandError> {
+    state
+        .enable_system_key()
         .await
         .map_err(CommandError::invalid_input)
 }
@@ -1020,16 +1034,25 @@ pub async fn key_butler_vault_disable(
     state.disable().await.map_err(CommandError::internal)
 }
 
-/// 查询加密保存状态。
+/// 查询本地保存状态。
+///
+/// 顺带尝试自动解锁「无密码模式」的密文库 —— 那是它存在的全部意义。
+/// 解不开时**不让状态查询失败**：前端会看到
+/// `enabled && !unlocked && systemKey`，据此给出「这份数据不属于当前
+/// Windows 账户」的引导；若在这里抛错，整个列表加载都会一起挂掉。
 #[tauri::command]
 pub async fn key_butler_vault_status(
     state: State<'_, KeyButlerState>,
 ) -> Result<VaultStatus, CommandError> {
+    if let Err(err) = state.auto_unlock_system_key().await {
+        // 错误信息里只有账户/文件层面的描述，不含任何 Key 内容
+        eprintln!("[ModelScout] 无密码密文库自动解锁失败：{err}");
+    }
     Ok(state.status().await)
 }
 
 /* ---------------------------------------------------------------------------
- * 命令 14：余额快照
+ * 命令 15：余额快照
  * ------------------------------------------------------------------------- */
 
 /// 查询某条 Key 的余额快照序列（按时间升序）。
