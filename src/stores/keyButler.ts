@@ -34,6 +34,7 @@ import {
   keyButlerUpdateNote,
   keyButlerVaultDisable,
   keyButlerVaultEnable,
+  keyButlerVaultEnableSystem,
   keyButlerVaultStatus,
   keyButlerVaultUnlock,
 } from '@/api/commands'

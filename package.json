@@ -7,8 +7,8 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
-    "typecheck": "vue-tsc --noEmit",
+    "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
