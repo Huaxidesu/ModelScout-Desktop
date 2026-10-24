@@ -1,32 +1,19 @@
-//! ============================================================================
-//! ModelScout —— 端到端集成测试（引擎层）
-//! ============================================================================
+//! 端到端集成测试（引擎层）。
 //!
-//! 【为什么要这个文件】（见 docs/DECISIONS.md D-37）
+//! 存在意义：`run_engine` 的结果收集路径（写入 `state.results` 并在返回值
+//! 中如实带出）无法被纯函数单测覆盖，也无法被 `cargo check` 发现
+//! （变量被读取过不算 unused）。一旦该路径漏写，命令返回空数组、
+//! 界面显示 0/0 而日志全部正常——静默失败。本文件用 mock HTTP 服务
+//! 驱动完整的 `fetch_model_list` → `run_engine` 流程并断言结果条数。
 //!
-//! 曾经有一个严重 bug：`run_engine()` 把结果写进了 `state.results`，
-//! 却**忘了写进返回值**，导致命令返回空数组、界面永远显示「0/0 暂无探测结果」，
-//! 而日志里每个模型都显示「完成」。
-//!
-//! 那个 bug 逃过了全部 36 个单元测试 —— 因为它们都是**纯函数**测试
-//! （解析、正则、脱敏…），没有任何一个覆盖 `run_engine` 的**结果收集路径**。
-//! `cargo check` 也报不出来：变量被读取过，不是 unused。
-//!
-//! 所以这里必须做**真集成**：起一个 mock HTTP 服务，驱动完整的
-//! `fetch_model_list` → `run_engine` 流程，然后断言结果条数。
-//!
-//! 【关键设计：事件端口（EventSink）】
-//! `run_engine` 原本直接依赖 `AppHandle`，因此无法在没有 Tauri 应用的场景下测试。
-//! 现在它依赖 `probe::EventSink` 端口：
-//!   - 生产环境传 `TauriSink`（内部就是 `AppHandle::emit`）；
+//! 事件端口设计：`run_engine` 依赖 `probe::EventSink` 端口而非 `AppHandle`：
+//!   - 生产环境传 `TauriSink`（内部即 `AppHandle::emit`）；
 //!   - 这里传 `RecordingSink`，把事件收进 `Vec`。
 //!
-//! 这样做除了解耦，还规避了一个真实的环境坑：
-//! 若测试使用 `tauri::test::mock_app()`，就必须启用 `tauri` 的 `test` feature，
-//! 而那会把完整 GUI 运行时（comctl32 / user32 / dwmapi…）链进测试二进制，
-//! 在缺少 Windows 清单的 test 目标上会以
-//! `STATUS_ENTRYPOINT_NOT_FOUND (0xC0000139)` 启动失败（详见 D-37）。
-//! ============================================================================
+//! 由此还规避一个环境问题：若使用 `tauri::test::mock_app()`，必须启用
+//! `tauri` 的 `test` feature，那会把完整 GUI 运行时（comctl32 / user32 /
+//! dwmapi 等）链进测试二进制，在缺少 Windows 清单的 test 目标上以
+//! `STATUS_ENTRYPOINT_NOT_FOUND (0xC0000139)` 启动失败。
 
 use std::sync::{Arc, Mutex};
 
@@ -38,8 +25,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 /// mock 服务返回的模型数量。三个模型分别覆盖两条路径：
-///   - `plain-alpha` / `plain-beta`：/models 里**没有**扩展字段 → 走完整实测探测
-///   - `rich-gamma`：/models 里**带**扩展 schema → 走「接口声明」路径
+///   - `plain-alpha` / `plain-beta`：/models 里没有扩展字段 → 走完整实测探测
+///   - `rich-gamma`：/models 里带扩展 schema → 走「接口声明」路径
 const MODEL_COUNT: usize = 3;
 
 // ---------------------------------------------------------------------------
@@ -241,14 +228,10 @@ fn mock_client(base_url: &str) -> ApiClient {
     ApiClient::new(&config).expect("ApiClient 构造失败")
 }
 
-// ---------------------------------------------------------------------------
-// 测试 1：D-37 的回归测试 —— 结果必须被完整收集
-// ---------------------------------------------------------------------------
+// ---- 回归测试：结果必须被完整收集 ----
 
-/// **这是 D-37 的回归测试。**
-///
-/// 断言 `run_engine` 的返回值里带着**全部**模型。
-/// 修复前结果收集漏写，这里会得到 `0`，测试立即失败。
+/// 断言 `run_engine` 的返回值里带着全部模型。
+/// 结果收集路径漏写时这里会得到 `0`，测试立即失败。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_engine_returns_every_probed_model() {
     let base = start_mock_server().await;
@@ -279,7 +262,7 @@ async fn run_engine_returns_every_probed_model() {
     assert_eq!(
         outcome.models.len(),
         MODEL_COUNT,
-        "run_engine 必须返回全部 {MODEL_COUNT} 个模型（漏收集会得到 0 —— 见 D-37）"
+        "run_engine 必须返回全部 {MODEL_COUNT} 个模型（漏收集会得到 0）"
     );
     assert_eq!(
         outcome.status,
@@ -313,7 +296,7 @@ async fn run_engine_returns_every_probed_model() {
 // 测试 2：接口声明路径 —— 扩展 schema 的值应被直接采信
 // ---------------------------------------------------------------------------
 
-/// 带扩展 schema 的模型，其上下文/输出/工具/视觉/推理应**全部来自接口声明**，
+/// 带扩展 schema 的模型，其上下文/输出/工具/视觉/推理应全部来自接口声明，
 /// 且来源标记为「接口声明」；标准 OpenAI 条目则走实测路径。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn declared_capabilities_are_trusted_without_probing() {

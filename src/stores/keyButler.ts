@@ -1,21 +1,13 @@
 /**
- * ============================================================================
- * ModelScout —— Key 管家（Beta）全局状态
- * ============================================================================
+ * Key 管家（Beta）全局状态。
  *
- * 【职责】
  * 集中存放 Key 管家的全部可变状态：Key 列表、加密保存状态、检测进度、
- * 过滤条件。组件只负责渲染与调用 action。
+ * 过滤条件；组件只负责渲染与调用 action。与探测模块 store 完全独立，
+ * 不共享任何状态（模块隔离原则）。
  *
- * 【与探测模块 store 的关系】
- * 完全独立。`stores/probe.ts` 管探测，本文件管 Key 管家，
- * 两者不共享任何状态（模块隔离原则）。
- *
- * 【性能要点】
- * 批量检测会高频推送进度事件（每条 Key 两个阶段）。这里对进度做
- * 100ms 时间窗合并，避免每个事件都触发一次组件重渲染；
- * 逐条结果（`applyEntryDone`）则就地替换，不做整体重建。
- * ============================================================================
+ * 性能要点：批量检测会高频推送进度事件（每条 Key 两个阶段），
+ * 对进度做 100ms 时间窗合并，避免每个事件都触发组件重渲染；
+ * 逐条结果（`applyEntryDone`）就地替换，不做整体重建。
  */
 
 import { defineStore } from 'pinia'
@@ -53,9 +45,7 @@ import type {
   VaultStatus,
 } from '@/types/contracts'
 
-/* ---------------------------------------------------------------------------
- * 常量与工具
- * ------------------------------------------------------------------------- */
+// ---- 常量与工具 ----
 
 /**
  * 平台标识 → 界面显示名。
@@ -88,13 +78,13 @@ export function platformLabel(platform: string): string {
 /**
  * 「手动指定厂商」下拉里可选的平台。
  *
- * 顺序即展示顺序：**能被自动识别的平台在前**（万一识别错了可以手动纠正），
+ * 顺序即展示顺序：能被自动识别的平台在前（识别错误时可手动纠正），
  * 「通用 / 中转」垫底。
  *
- * 【为什么这份清单写在前端而不是从后端拉】
- * 它只决定「下拉里列出哪些选项」；Base URL / 余额适配器这类**行为性**默认值
- * 一律由后端按平台标识查规则表（`platform::defaults_for`）得出。
- * 因此这里少写一个平台最多是「下拉里看不到它」，不会造成配置漂移。
+ * 清单写在前端而非从后端拉取的原因：它只决定下拉里列出哪些选项；
+ * Base URL / 余额适配器这类行为性默认值一律由后端按平台标识查规则表
+ * （`platform::defaults_for`）得出。少写一个平台最多是下拉里看不到它，
+ * 不会造成配置漂移。
  */
 export const IMPORT_PLATFORMS: Array<{ label: string; value: string }> = [
   'deepseek',
@@ -161,12 +151,10 @@ export function formatBalance(entry: KeyEntry): string {
   return `${symbol}${entry.balance.toFixed(2)}`
 }
 
-/* ---------------------------------------------------------------------------
- * Store
- * ------------------------------------------------------------------------- */
+// ---- Store ----
 
 export const useKeyButlerStore = defineStore('keyButler', () => {
-  /* ---------------------------- 状态 ---------------------------- */
+  /* ---- 状态 ---- */
 
   /** 脱敏 Key 列表（后端保证不含明文） */
   const entries = ref<KeyEntry[]>([])
@@ -194,7 +182,7 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
   /** 最近一次整批汇总 */
   const lastSummary = ref<KeyCheckSummary | null>(null)
 
-  /* ---------------------------- 过滤条件 ---------------------------- */
+  /* ---- 过滤条件 ---- */
 
   const keyword = ref('')
   const filterPlatform = ref<string | null>(null)
@@ -202,15 +190,14 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
   /** 余额不足阈值：余额 ≤ 该值判为不足 */
   const lowBalanceThreshold = ref(0)
 
-  /* ---------------------------- 多选（批量编辑） ---------------------------- */
+  /* ---- 多选（批量编辑） ---- */
 
   /**
    * 已勾选的 Key id。
    *
-   * 【为什么用数组而不是 Set】
-   * Vue 的响应式对 Set 的 `has()` 追踪不如数组直白，而这里规模只有几十条，
-   * 用 `includes` 的 O(n) 完全不构成问题；换成 Set 反而要额外处理
-   * `reactive(new Set())` 的坑。
+   * 用数组而非 Set：Vue 响应式对 Set 的 `has()` 追踪不如数组直白，
+   * 规模只有几十条时 `includes` 的开销可忽略；Set 还需额外处理
+   * `reactive(new Set())` 的响应式问题。
    */
   const selectedIds = ref<string[]>([])
 
@@ -245,7 +232,7 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     selectedIds.value = []
   }
 
-  /* ---------------------------- 计算属性 ---------------------------- */
+  /* ---- 计算属性 ---- */
 
   /** 密文库已启用但未解锁 —— 界面要引导用户先解锁 */
   const isLocked = computed(() => vault.value.enabled && !vault.value.unlocked)
@@ -324,8 +311,8 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
   /**
    * 四态计数。
    *
-   * **只统计已检测过的条目**（`lastCheckedAt !== null`）：
-   * 新导入的 Key 状态字段是 `error`，若不排除，「查询失败」会虚高。
+   * 只统计已检测过的条目（`lastCheckedAt !== null`）：
+   * 新导入的 Key 状态字段是 `error`，若不排除，「查询失败」计数会虚高。
    */
   const stats = computed(() => {
     const counter: Record<KeyStatus, number> = {
@@ -345,7 +332,7 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     return { ...counter, unchecked }
   })
 
-  /* ---------------------------- 进度节流 ---------------------------- */
+  /* ---- 进度节流 ---- */
 
   let progressTimer: number | null = null
   let pendingProgress: KeyCheckProgress | null = null
@@ -400,7 +387,7 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     }
   }
 
-  /* ---------------------------- 动作 ---------------------------- */
+  /* ---- 动作 ---- */
 
   /** 载入列表与加密保存状态。 */
   async function load(): Promise<void> {
@@ -447,7 +434,7 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
         ids,
         lowBalanceThreshold: lowBalanceThreshold.value,
       })
-      // 事件可能全部丢失，这里用返回值兜底覆盖一次
+      // 事件可能全部丢失，用返回值作为后备覆盖一次
       lastSummary.value = summary
       checking.value = false
       return summary
@@ -495,7 +482,7 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
   /**
    * 取单个完整 Key（仅供一键复制）。
    *
-   * 刻意**不**写进 store —— 明文只应在调用栈里短暂存在。
+   * 刻意不写进 store——明文只应在调用栈里短暂存在。
    */
   async function reveal(id: string): Promise<string> {
     return keyButlerReveal(id)

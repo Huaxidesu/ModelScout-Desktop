@@ -1,26 +1,13 @@
-/**
- * ============================================================================
- * ModelScout —— Tauri 命令层
- * ============================================================================
- *
- * 【职责】
- * 把 `probe.rs` 的能力暴露为 6 个 `#[tauri::command]`。
- * 本文件是前端 `invoke()` 的唯一对接面。
- *
- * 【命令清单（必须与 src-tauri/src/lib.rs 的 generate_handler! 完全一致）】
- *   1. list_models
- *   2. ping_connection
- *   3. start_probe
- *   4. stop_probe
- *   5. get_probe_state
- *   6. save_config_file
- *
- * 【Tauri v2 要点】
- *   - 命令用 `async fn`，返回 `Result<T, E>`，其中 E 需实现 Serialize
- *   - 参数名在前端以 camelCase 传入（Tauri 会自动做 snake_case 映射）
- *   - `AppHandle` / `State` 作为参数注入，由框架提供
- * ============================================================================
- */
+//! Tauri 命令层：把探测引擎与字典的能力暴露为 `#[tauri::command]`，
+//! 是前端 `invoke()` 的唯一对接面。
+//!
+//! - 命令清单：`list_models` / `ping_connection` / `start_probe` /
+//!   `stop_probe` / `get_probe_state` / `save_config_file` /
+//!   `get_dictionary_info`，必须与 `lib.rs` 的 `generate_handler!`
+//!   注册列表完全一致；
+//! - 命令使用 `async fn`，返回 `Result<T, E>`（E 需实现 `Serialize`）；
+//! - 参数名由前端以 camelCase 传入（Tauri 自动映射 snake_case）；
+//! - `AppHandle` / `State` 作为参数注入，由框架提供。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,9 +26,7 @@ use crate::probe::{
     self, ApiClient, EngineOptions, RunState,
 };
 
-/* ===========================================================================
- * 应用全局状态
- * ========================================================================= */
+// ---- 应用全局状态 ----
 
 /// 被 Tauri 托管的全局状态。
 ///
@@ -90,21 +75,15 @@ impl AppState {
     }
 }
 
-/* ===========================================================================
- * 1. list_models —— 仅拉取模型列表
- * ========================================================================= */
+// ---- list_models：仅拉取模型列表 ----
 
 /// 拉取 `/models` 返回的模型清单，不做任何能力探测。
 ///
-/// 【用途】
-/// 让用户在正式探测前先看到「这个端点上有哪些模型」，
-/// 从而可以用 `onlyModels` 缩小探测范围，节省时间与额度。
+/// 用于在正式探测前查看端点上有哪些模型，配合 `onlyModels` 缩小探测范围，
+/// 节省时间与额度。
 ///
-/// # 参数
-/// - `config`: 探测配置（此命令只用到 baseUrl / apiKey / timeoutSecs）
-///
-/// # 返回
-/// `ModelListResult`；失败时返回分类后的 `CommandError`。
+/// - `config`：探测配置（本命令只使用 baseUrl / apiKey / timeoutSecs）；
+/// - 返回 `ModelListResult`，失败时返回分类后的 `CommandError`。
 #[tauri::command]
 pub async fn list_models(
     config: ProbeConfig,
@@ -136,13 +115,11 @@ pub async fn list_models(
     })
 }
 
-/* ===========================================================================
- * 2. ping_connection —— 连通性 + 鉴权预检
- * ========================================================================= */
+// ---- ping_connection：连通性 + 鉴权预检 ----
 
 /// 构造一个「预检失败」的 `PingResult`。
 ///
-/// 预检命令的契约是**永不返回 Err**：无论参数不合法、密钥无法解析还是
+/// 预检命令的契约是永不返回 `Err`：无论参数不合法、密钥无法解析还是
 /// 网络/鉴权失败，都封装成 `PingResult.error` 交给前端渲染诊断卡片。
 fn ping_failure(message: impl Into<String>, resolved_url: String) -> PingResult {
     PingResult {
@@ -162,18 +139,16 @@ fn ping_failure(message: impl Into<String>, resolved_url: String) -> PingResult 
 
 /// 连通性与鉴权预检。
 ///
-/// 【与 list_models 的区别】
-/// 本命令**永不返回 Err**：所有失败（参数不合法、密钥来源无法解析、
-/// 网络或鉴权失败）都被归类塞进 `PingResult.error`，
-/// 让前端可以直接渲染一个「诊断卡片」，而不需要走 catch 分支。
+/// 与 `list_models` 的区别：本命令永不返回 `Err`，所有失败（参数不合法、
+/// 密钥来源无法解析、网络或鉴权失败）都归类放入 `PingResult.error`，
+/// 前端可直接渲染诊断卡片，无需走 catch 分支。
 ///
-/// # 参数
-/// - `config`: 探测配置。本命令只用到 `baseUrl`、密钥（明文或其来源）
-///   与 `timeoutSecs`；并发数与上限探测开关会被强制覆盖为
-///   「单并发、不跑上限探测」。
+/// - `config`：探测配置。本命令只使用 `baseUrl`、密钥（明文或其来源）与
+///   `timeoutSecs`；并发数与上限探测开关被强制覆盖为
+///   单并发、不执行上限探测。
 #[tauri::command]
 pub async fn ping_connection(config: ProbeConfig) -> Result<PingResult, CommandError> {
-    // 预检固定单并发、不跑上限探测，其余字段沿用调用方传入的配置
+    // 预检固定单并发、不执行上限探测，其余字段沿用调用方传入的配置
     let config = ProbeConfig {
         concurrency: 1,
         probe_limits: false,
@@ -228,25 +203,18 @@ pub async fn ping_connection(config: ProbeConfig) -> Result<PingResult, CommandE
     }
 }
 
-/* ===========================================================================
- * 3. start_probe —— 启动完整探测流水线
- * ========================================================================= */
+// ---- start_probe：启动完整探测流水线 ----
 
 /// 启动完整的并发探测流水线。
 ///
-/// 【异步语义】
-/// 本命令会**等待整轮探测跑完**才返回。之所以这样设计而不是「立刻返回、
-/// 靠事件推送」：
-///   1. 前端需要拿到最终汇总用于生成配置，事件只是过程展示；
-///   2. Tauri 的 async command 在独立任务中执行，不会阻塞 UI 线程；
-///   3. 请求/响应语义比「启动 + 轮询」更简单，出错路径更少。
-/// 在此期间，全部进度通过 5 个 `probe://*` 事件实时推送。
+/// 本命令等待整轮探测完成后才返回，而非「立刻返回、靠事件推送」：
+/// 1. 前端需要最终汇总用于生成配置，事件只承担过程展示；
+/// 2. Tauri 的 async command 在独立任务中执行，不阻塞 UI 线程；
+/// 3. 请求/响应语义比「启动 + 轮询」更简单，出错路径更少。
+/// 运行期间全部进度通过 5 个 `probe://*` 事件实时推送。
 ///
-/// # 参数
-/// - `config`: 完整探测配置
-///
-/// # 返回
-/// `ProbeRunSummary`（含全部模型结果）；出现致命错误时返回 `CommandError`。
+/// - `config`：完整探测配置；
+/// - 返回 `ProbeRunSummary`（含全部模型结果）；致命错误时返回 `CommandError`。
 #[tauri::command]
 pub async fn start_probe(
     app: AppHandle,
@@ -261,7 +229,7 @@ pub async fn start_probe(
         .with_resolved_key()
         .map_err(CommandError::invalid_input)?;
 
-    // ---- 并发互斥：若已有任务在跑，直接拒绝 ----
+    // ---- 并发互斥：若有任务正在运行，直接拒绝 ----
     {
         let guard = state.current.lock().await;
         if let Some(existing) = guard.as_ref() {
@@ -320,8 +288,8 @@ pub async fn start_probe(
     state.set_last_status(ProbeStatus::Running).await;
 
     // ---- 阶段 C：执行并发引擎 ----
-    // 引擎通过「事件端口」发事件，生产环境用 TauriSink 转发到前端；
-    // 测试可换成记录型 sink，从而无需启动 Tauri 应用（见 D-37）。
+    // 引擎通过「事件端口」发事件：生产环境用 `TauriSink` 转发到前端，
+    // 测试可用记录型 sink，无需启动 Tauri 应用。
     let outcome = probe::run_engine(
         probe::TauriSink(app.clone()),
         run_state.clone(),
@@ -359,21 +327,17 @@ pub async fn start_probe(
     Ok(summary)
 }
 
-/* ===========================================================================
- * 4. stop_probe —— 中止当前探测
- * ========================================================================= */
+// ---- stop_probe：中止当前探测 ----
 
 /// 请求中止当前正在运行的探测任务。
 ///
-/// 【中止语义（诚实说明）】
-/// 「中止」是**协作式**的，不是立即杀死：
-///   - 尚未开始的任务：会被直接丢弃（buffer_unordered 流的 drop 语义）
-///   - 正在等待网络响应的任务：无法取消已发出的请求，
-///     它们会在各自超时后结束；期间结果会被忽略
-///   - 因此返回值里的 `completed` 可能仍会在此后略微增长
+/// 中止是协作式的，并非立即终止：
+/// - 尚未开始的任务被直接丢弃（`buffer_unordered` 流的 drop 语义）；
+/// - 正在等待网络响应的任务无法取消已发出的请求，它们在各自超时后结束，
+///   期间结果被忽略；
+/// - 因此返回值中的 `completed` 仍可能在此后略微增长。
 ///
-/// # 返回
-/// 返回中止时刻的状态快照。无任务运行时返回 `Idle` 快照（不报错）。
+/// 返回中止时刻的状态快照；无任务运行时返回 `Idle` 快照（不报错）。
 #[tauri::command]
 pub async fn stop_probe(
     state: State<'_, AppState>,
@@ -394,25 +358,20 @@ pub async fn stop_probe(
             Ok(snapshot)
         }
         None => {
-            // 无任务在跑：返回空闲快照，不视作错误
+            // 无任务运行：返回空闲快照，不视作错误
             let snapshot = probe::build_snapshot(None, ProbeStatus::Idle).await;
             Ok(snapshot)
         }
     }
 }
 
-/* ===========================================================================
- * 5. get_probe_state —— 查询实时快照
- * ========================================================================= */
+// ---- get_probe_state：查询实时快照 ----
 
 /// 查询当前探测快照。
 ///
-/// 【用途】
-/// - 前端窗口刷新 / 面板重新挂载时重同步状态
-/// - 事件丢失（例如 DevTools 重连）后的回退轮询
-///
-/// # 返回
-/// 任意时刻都返回 `Ok`，空闲时是 `status = idle` 的空快照。
+/// 用于前端窗口刷新 / 面板重新挂载时重同步状态，以及事件丢失
+/// （例如 DevTools 重连）后的回退轮询。任意时刻都返回 `Ok`，
+/// 空闲时是 `status = idle` 的空快照。
 #[tauri::command]
 pub async fn get_probe_state(
     state: State<'_, AppState>,
@@ -420,7 +379,7 @@ pub async fn get_probe_state(
     let current = state.snapshot_state().await;
     let last_status = state.get_last_status().await;
 
-    // 有任务在跑：用 Running；已结束：用最近状态
+    // 有任务在运行：用 Running；已结束：用最近状态
     let effective_status = if current.is_some() {
         ProbeStatus::Running
     } else {
@@ -430,28 +389,21 @@ pub async fn get_probe_state(
     Ok(probe::build_snapshot(current.as_ref(), effective_status).await)
 }
 
-/* ===========================================================================
- * 6. save_config_file —— 把生成的配置写入磁盘
- * ========================================================================= */
+// ---- save_config_file：把生成的配置写入磁盘 ----
 
 /// 把生成的配置文本写入用户指定/默认位置。
 ///
-/// 【设计取舍】
-/// 官方推荐做法是前端用 `@tauri-apps/plugin-dialog` 弹保存框，
-/// 但那需要额外引入 dialog 插件与权限。为了把依赖面控制到最小
-/// （决策日志 D-08），这里采用「写入应用数据目录下的 exports/ 子目录」
-/// 的方案：
-///   - Windows: %APPDATA%/com.huaxidesu.modelscout/exports/
-///   - Linux  : ~/.local/share/com.huaxidesu.modelscout/exports/
+/// 未采用官方推荐的 `@tauri-apps/plugin-dialog` 保存框方案：那需要额外引入
+/// dialog 插件与权限；为把依赖面控制到最小，改为写入应用数据目录下的
+/// exports/ 子目录：
+/// - Windows: %APPDATA%/com.huaxidesu.modelscout/exports/
+/// - Linux  : ~/.local/share/com.huaxidesu.modelscout/exports/
 ///
-/// 不覆盖已存在文件：若同名文件已存在则追加 `-1` `-2` 等后缀，
-/// 避免用户前一次生成的配置被静默覆盖。
+/// 不覆盖已存在文件：同名文件已存在时追加 `-1`、`-2` 等后缀，
+/// 避免用户先前生成的配置被静默覆盖。
 ///
-/// # 参数
-/// - `request`: `{ fileName, content }`
-///
-/// # 返回
-/// `{ saved: true, path: "<绝对路径>" }`
+/// - `request`：`{ fileName, content }`；
+/// - 返回 `{ saved: true, path: "<绝对路径>" }`。
 #[tauri::command]
 pub async fn save_config_file(
     app: AppHandle,
@@ -509,9 +461,7 @@ pub async fn save_config_file(
     })
 }
 
-/* ===========================================================================
- * 7. get_dictionary_info —— 字典自检（辅助命令，非任务书要求但有助于排障）
- * ========================================================================= */
+// ---- get_dictionary_info：字典自检（辅助命令） ----
 
 /// 返回字典条目数与版本信息，便于前端在「设置/关于」处展示数据新鲜度。
 #[tauri::command]
@@ -521,9 +471,7 @@ pub async fn get_dictionary_info() -> Result<Value, CommandError> {
     }))
 }
 
-/* ---------------------------------------------------------------------------
- * 单元测试（仅覆盖不依赖 Tauri 运行时的纯逻辑）
- * ------------------------------------------------------------------------- */
+// ---- 单元测试（仅覆盖不依赖 Tauri 运行时的纯逻辑） ----
 
 #[cfg(test)]
 mod tests {

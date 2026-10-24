@@ -1,34 +1,26 @@
-/**
- * ============================================================================
- * ModelScout —— Key 管家：数据契约（阶段 0 交付）
- * ============================================================================
- *
- * 【本文件地位】
- * Key 管家模块的**唯一**对外契约定义，与前端 `src/types/contracts.ts` 中的
- * 「Key 管家」一节逐字段对应。字段名统一 camelCase（serde rename_all）。
- *
- * 【为什么独立成文件而不是塞进 src/models.rs】
- * 任务书「防混乱三原则」第 1 条要求模块隔离：Key 管家的契约与探测模块的契约
- * 放在一起会让两个模块的字段互相干扰（尤其是 `ProbeErrorKind` 这类共用概念）。
- * 因此本模块自带契约文件，`scripts/cross_check.py` 已扩展为同时核对本文件。
- *
- * 【安全约定（本模块的红线）】
- *   1. `KeyEntry` **绝不**包含 Key 明文，只有 `masked_key`。
- *      明文只存在于 `vault` 的内存表中，且只在 `key_butler_reveal` 时按 id 取出。
- *   2. 任何结构体都不会被写入日志；错误信息一律经过 `error::redact_key` /
- *      `scrub_secrets` 处理。
- *   3. 列表展示的脱敏格式是 `sk-ab***cdef`（前 5 后 4），
- *      与错误信息脱敏（`***REDACTED***`）是两套东西，不要混用。
- * ============================================================================
- */
+//! Key 管家数据契约：本模块唯一的对外契约定义。
+//!
+//! 与前端 `src/types/contracts.ts` 的「Key 管家」一节逐字段对应，
+//! 字段名统一 camelCase（serde rename_all）。
+//!
+//! 独立成文件的原因（模块隔离原则）：Key 管家的契约与探测模块的契约
+//! 放在一起会让两个模块的字段互相干扰（尤其 `ProbeErrorKind` 这类共用概念）；
+//! `scripts/cross_check.py` 已扩展为同时核对本文件。
+//!
+//! 安全约定（本模块红线）：
+//!   1. `KeyEntry` 绝不包含 Key 明文，只有 `masked_key`；
+//!      明文只存在于 `vault` 的内存表中，且只在 `key_butler_reveal` 时按 id 取出；
+//!   2. 任何结构体都不会被写入日志；错误信息一律经过 `error::redact_key` /
+//!      `scrub_secrets` 处理；
+//!   3. 列表展示的脱敏格式是 `sk-ab***cdef`（前 5 后 4），
+//!      与错误信息脱敏（`*REDACTED*`）是两套规则，不得混用。
+
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/* ---------------------------------------------------------------------------
- * 一、枚举
- * ------------------------------------------------------------------------- */
+// ---- 枚举 ----
 
 /// 一条 Key 的状态（四态分类）。
 ///
@@ -38,8 +30,8 @@ use serde::{Deserialize, Serialize};
 ///   - 有效且余额 ≤ 阈值（含余额为负）        → `Insufficient`
 ///   - 网络 / 429 / 5xx / 解析失败 / 余额未知 → `Error`
 ///
-/// 注意：**未检测过**的 Key 也用 `Error` 承载（配合 `last_checked_at == None`
-/// 区分），因为任务书把状态定死为四态，不额外增加 `pending`。
+/// 注意：未检测过的 Key 也用 `Error` 承载（配合 `last_checked_at == None`
+/// 区分），状态定为四态，不额外增加 `pending`；
 /// 前端据此展示「未检测」，且不计入四态汇总。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,7 +59,7 @@ impl Default for KeyStatus {
 
 /// 余额接口的适配器类型。
 ///
-/// 任务书第四节「余额接口现实」：OpenAI 官方已下线公开余额接口、
+/// 余额接口的现实约束：OpenAI 官方已下线公开余额接口、
 /// Anthropic 无公开端点，因此必须按平台适配。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,9 +129,7 @@ impl CheckStage {
     }
 }
 
-/* ---------------------------------------------------------------------------
- * 二、数据模型
- * ------------------------------------------------------------------------- */
+// ---- 数据模型 ----
 
 /// 自定义余额接口配置（`balanceEndpoint == "custom"` 时生效）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,7 +153,7 @@ pub struct BalanceEndpoint {
     /// 直接余额取值路径（服务端直接返回余额字段时使用）
     #[serde(default)]
     pub balance_path: Option<String>,
-    /// 单位除数：默认 1；one-api 的 `total_usage` 以**美分**计时为 100
+    /// 单位除数：默认 1；one-api 的 `total_usage` 以美分计时为 100
     #[serde(default = "default_unit_divisor")]
     pub unit_divisor: f64,
 }
@@ -175,7 +165,7 @@ fn default_unit_divisor() -> f64 {
 
 /// 一条被管理的 Key。
 ///
-/// **本结构体不含 Key 明文**：只有 `masked_key`。
+/// 本结构体不含 Key 明文：只有 `masked_key`。
 /// 明文保存在 `vault` 的内存表里，仅在 `key_butler_reveal` 时按 id 取出。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -216,18 +206,17 @@ pub struct KeyEntry {
     pub custom_endpoint: Option<BalanceEndpoint>,
     /// 该 Key 的 Base URL（有效性检测与余额查询都需要）。
     ///
-    /// 【为什么数据模型里必须有它】
-    /// 任务书给出的 `KeyEntry` 没有 Base URL，但「最小 chat 请求」和
-    /// `{base}` 占位都必须知道端点；同一批 Key 可能来自不同中转站，
-    /// 因此只能按 Key 记录。导入时按平台给一个默认值（见
+    /// 数据模型必须有 Base URL 的原因：「最小 chat 请求」与
+    /// `{base}` 占位都需要知道端点，而同一批 Key 可能来自不同中转站，
+    /// 因此按 Key 记录。导入时按平台给默认值（见
     /// `platform_prefixes.json` 的 `defaultBaseUrl`），用户可逐条修改。
     pub base_url: Option<String>,
 }
 
 /// 一条余额快照。
 ///
-/// **不含 Key 明文**，只含 `key_id` 引用 + 数值，因此可明文落盘
-/// （与加密的 Key 本体分离，见任务书第四节安全模型）。
+/// 不含 Key 明文，只含 `key_id` 引用 + 数值，因此可明文落盘
+/// （与加密的 Key 本体分离存储，见 vault 模块安全模型）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -241,9 +230,7 @@ pub struct Snapshot {
     pub status: String,
 }
 
-/* ---------------------------------------------------------------------------
- * 三、命令入参 / 出参
- * ------------------------------------------------------------------------- */
+// ---- 命令入参 / 出参 ----
 
 /// 批量导入时的平台判定方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,8 +251,8 @@ impl Default for KeyImportMode {
 
 /// `key_butler_import` 的入参。
 ///
-/// 手动模式（`mode == Manual`）下，`platform` 是**必填**的；`base_url` 与
-/// `balance_endpoint` 是**可选覆盖**：
+/// 手动模式（`mode == Manual`）下，`platform` 是必填的；`base_url` 与
+/// `balance_endpoint` 是可选覆盖：
 ///   - 不传 / 传空 → 用该平台在规则表里的默认值（见 `platform::defaults_for`）
 ///   - 传了 → 覆盖默认值
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -291,7 +278,7 @@ pub struct KeyImportRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyImportResult {
-    /// 导入后的**全量**脱敏列表（省一次 key_butler_list 往返）
+    /// 导入后的全量脱敏列表（省一次 key_butler_list 往返）
     pub entries: Vec<KeyEntry>,
     /// 本次新增条数
     pub added: usize,
@@ -342,7 +329,7 @@ pub struct KeyCheckSummary {
 /// - `None`（或前端不传）= 该项保持不变
 /// - `Some(...)` = 覆盖为给定值
 ///
-/// `base_url` 传空字符串表示**清空**（后端归一为 `None`）。
+/// `base_url` 传空字符串表示清空（后端归一为 `None`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyConfigPatch {
@@ -359,7 +346,7 @@ pub struct KeyConfigPatch {
 
 /// `key_butler_update_many` 的入参：一次改多条 Key。
 ///
-/// 语义与 `KeyConfigPatch` 一致 —— **`None` 表示该项不动**。
+/// 语义与 `KeyConfigPatch` 一致 —— `None` 表示该项不动。
 /// 与单条版本的区别是多了 `platform` 与 `note`：
 /// 批量编辑最常见的诉求就是「这一批其实都是 DeepSeek，平台识别错了」，
 /// 只改平台标签而不动端点往往不够用，因此提供 `apply_platform_defaults`
@@ -398,16 +385,14 @@ pub struct VaultStatus {
     /// 当前内存中的 Key 条数
     pub entry_count: usize,
     /// 是否使用「无密码保存」：数据密钥由 Windows DPAPI 绑定当前账户，
-    /// 启动时自动解开。**磁盘上依然是 AES-256-GCM 密文，不是明文。**
+    /// 启动时自动解开。磁盘上依然是 AES-256-GCM 密文，不是明文。
     ///
     /// 注意：`enabled && !unlocked && systemKey` 表示「这份数据属于别的
     /// Windows 账户或另一台电脑」，前端要给出与「等待输入主密码」不同的引导。
     pub system_key: bool,
 }
 
-/* ---------------------------------------------------------------------------
- * 四、事件 payload
- * ------------------------------------------------------------------------- */
+// ---- 事件 payload ----
 
 /// 事件 `key-butler://progress` 的 payload。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -417,7 +402,7 @@ pub struct KeyCheckProgress {
     pub run_id: String,
     /// 当前处理的 Key id
     pub key_id: String,
-    /// 当前处理的 Key 脱敏串（便于日志与界面直接展示，**不含明文**）
+    /// 当前处理的 Key 脱敏串（便于日志与界面直接展示，不含明文）
     pub masked_key: String,
     /// 当前阶段
     pub stage: CheckStage,

@@ -1,20 +1,12 @@
 <script setup lang="ts">
 /**
- * ============================================================================
- * ModelTable —— 探测结果表格
- * ============================================================================
+ * 探测结果表格：展示全部探测字段（ID、显示名、工具、附件、推理、上下文、输出、耗时、来源），
+ * 支持勾选 / 全选 / 反选 / 按条件批量选择、行内手动纠正上下文与输出上限，
+ * 并提供「生成配置」入口。
  *
- * 【职责】
- *   1. 展示全部探测字段（ID、显示名、工具、附件、推理、上下文、输出、耗时、来源）
- *   2. 支持逐行勾选 / 全选 / 反选 / 按条件批量选择
- *   3. 支持**行内手动纠正**上下文与输出上限（应对服务商不回显数值的情况）
- *   4. 提供「生成配置」入口
- *
- * 【为什么允许手动编辑上限】
- * 上限探测依赖服务端在报错里回显数值。实测中总有服务商只回
- * "invalid max_tokens" 而不给具体约束 —— 与其让用户去改 JSON，
- * 不如在表格里直接改。改动后该项来源标记为「手动」（决策日志 D-10）。
- * ============================================================================
+ * 允许手动编辑上限的原因：上限探测依赖服务端在报错中回显数值，
+ * 部分服务商只返回「invalid max_tokens」而不给出具体约束；
+ * 手动修改后该项来源标记为「手动」。
  */
 
 import { computed, h, ref } from 'vue'
@@ -50,11 +42,10 @@ const dense = ref(true)
 /**
  * 当前显示 tooltip 的单元格标识；`null` 表示没有。
  *
- * 【为什么要手动控制显隐，而不是用 trigger="hover"】
- * 结果表格是虚拟滚动的（NDataTable `virtual-scroll`），而 Naive 的浮层是
- * teleport 到 body 上按坐标定位的。滚动过程中鼠标坐标没有变，浮层不会重新定位，
- * 表现就是「悬浮窗跟着一起滚出表格」。
- * 改成受控之后，表格一滚动就整体收起 —— 与 `ProgressPanel` 的处理保持一致。
+ * 手动控制显隐而非 trigger="hover" 的原因：结果表格是虚拟滚动的，
+ * 而 Naive 的浮层 teleport 到 body 按坐标定位，滚动过程中浮层不会重新定位，
+ * 会随内容滚出表格。改为受控后，表格一滚动就整体收起，
+ * 与 `ProgressPanel` 的处理保持一致。
  */
 const openTooltip = ref<string | null>(null)
 
@@ -75,9 +66,7 @@ function tooltipTriggerProps(key: string) {
   }
 }
 
-/* ---------------------------------------------------------------------------
- * 三态与来源的渲染辅助
- * ------------------------------------------------------------------------- */
+// ---- 三态与来源的渲染辅助 ----
 
 /** 三态 → 标签类型 */
 function triType(state: TriState): 'success' | 'error' | 'default' {
@@ -118,9 +107,7 @@ const SOURCE_HINTS: Record<LimitSource, string> = {
   unknown: '未能获取该上限，建议手工核对官方文档。',
 }
 
-/* ---------------------------------------------------------------------------
- * 过滤与排序
- * ------------------------------------------------------------------------- */
+// ---- 过滤与排序 ----
 
 /** 当前筛选条件 */
 const filterCapability = ref<'all' | 'tools' | 'vision' | 'reasoning'>('all')
@@ -152,9 +139,7 @@ const filteredModels = computed(() => {
   })
 })
 
-/* ---------------------------------------------------------------------------
- * 表格列定义
- * ------------------------------------------------------------------------- */
+// ---- 表格列定义 ----
 
 const columns = computed<DataTableColumns<ModelInfo>>(() => [
   /* ---- 勾选列 ---- */
@@ -186,8 +171,8 @@ const columns = computed<DataTableColumns<ModelInfo>>(() => [
           },
           row.id,
         ),
-        // 能力来自「接口自报」时给一个可悬停的小标记 ——
-        // 这样用户能一眼分辨哪些值不是实测出来的（见 D-34）
+        // 能力来自「接口自报」时给出可悬停的小标记，
+        // 便于分辨哪些值不是实测探测得出的
         row.capsSource && row.capsSource.startsWith('接口声明')
           ? h(
               'span',
@@ -349,9 +334,7 @@ const columns = computed<DataTableColumns<ModelInfo>>(() => [
   },
 ])
 
-/* ---------------------------------------------------------------------------
- * 单元格渲染辅助
- * ------------------------------------------------------------------------- */
+// ---- 单元格渲染辅助 ----
 
 /** 三态的颜色类 */
 function triColor(state: TriState): string {
@@ -469,9 +452,7 @@ function renderLimitCell(row: ModelInfo, field: 'contextLimit' | 'maxOutputLimit
   )
 }
 
-/* ---------------------------------------------------------------------------
- * 选择逻辑（与 store 双向同步）
- * ------------------------------------------------------------------------- */
+// ---- 选择逻辑（与 store 双向同步） ----
 
 /**
  * 表格的勾选行 key。
@@ -550,7 +531,7 @@ const FILTER_OPTIONS = [
 
 <template>
   <section class="ms-panel flex min-h-0 flex-col overflow-hidden">
-    <!-- ---------- 工具条 ---------- -->
+    <!-- ---- 工具条 ---- -->
     <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-ms-border px-3 py-2">
       <span class="ms-panel-title mr-1">探测结果</span>
       <NTag size="tiny" :bordered="false">
@@ -612,11 +593,11 @@ const FILTER_OPTIONS = [
       </NButton>
     </div>
 
-    <!-- ---------- 表格 ---------- -->
+    <!-- ---- 表格 ---- -->
     <!--
-      @scroll.capture：scroll 事件不冒泡，但捕获阶段能截到后代（NDataTable 内部的
-      滚动容器）的滚动。滚动时立即收起浮层，避免它「滚出表格」——
-      详见脚本里 openTooltip 的注释。
+      @scroll.capture：scroll 事件不冒泡，但捕获阶段能截到后代
+      （NDataTable 内部滚动容器）的滚动。滚动时立即收起浮层，
+      避免其滚出表格；原因见脚本中 openTooltip 的注释。
     -->
     <div class="min-h-0 flex-1" @scroll.capture="openTooltip = null">
       <NEmpty
@@ -641,7 +622,7 @@ const FILTER_OPTIONS = [
       />
     </div>
 
-    <!-- ---------- 底部说明 ---------- -->
+    <!-- ---- 底部说明 ---- -->
     <div
       class="shrink-0 border-t border-ms-border px-3 py-1.5 text-[10px] text-ms-text-faint"
     >

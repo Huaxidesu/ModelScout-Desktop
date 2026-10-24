@@ -1,29 +1,23 @@
-/**
- * ============================================================================
- * ModelScout —— Key 管家：余额查询适配器
- * ============================================================================
- *
- * 【现实约束（任务书第四节）】
- *   - OpenAI 官方**已下线**公开余额接口；Anthropic **没有**公开余额端点。
- *   - 真正能查到余额的主要是两类：
- *       a) one-api / new-api 系中转站（`builtin-oneapi`）：
- *            GET {host}/v1/dashboard/billing/subscription  → 总额度
- *            GET {host}/v1/dashboard/billing/usage         → 已用额度（**单位是美分**）
- *       b) DeepSeek 官方（`builtin-deepseek`）：
- *            GET {host}/user/balance → balance_infos[0].total_balance（字符串）
- *   因此必须做适配器，而不是假设「所有平台都能查余额」。
- *
- * 【铁律】余额查询失败 **≠** Key 失效。
- * 本模块的失败只反映在 `BalanceOutcome.error` 里，由调用方决定怎么展示；
- * 它绝不参与 `keyValid` 的判定。
- *
- * 【{base} 占位语义（重要）】
- *   - `{base}`    → **去掉版本段的主机地址**，如 `https://relay.example.com`
- *                   （与任务书示例 `{base}/v1/dashboard/billing/subscription` 一致）
- *   - `{baseUrl}` → 原样存储的 Base URL，如 `https://relay.example.com/v1`
- *   提供两种是为了兼容「用户填的 Base URL 带不带 /v1」两种情况。
- * ============================================================================
- */
+//! Key 管家：余额查询适配器。
+//!
+//! 现实约束：
+//!   - OpenAI 官方已下线公开余额接口；Anthropic 没有公开余额端点；
+//!   - 真正能查到余额的主要是两类：
+//!       a) one-api / new-api 系中转站（`builtin-oneapi`）：
+//!            GET {host}/v1/dashboard/billing/subscription  → 总额度
+//!            GET {host}/v1/dashboard/billing/usage         → 已用额度（单位是美分）
+//!       b) DeepSeek 官方（`builtin-deepseek`）：
+//!            GET {host}/user/balance → balance_infos[0].total_balance（字符串）
+//!   因此必须做适配器，不能假设所有平台都能查余额。
+//!
+//! 铁律：余额查询失败 ≠ Key 失效。本模块的失败只反映在
+//! `BalanceOutcome.error` 里，由调用方决定如何展示；绝不参与 `keyValid` 判定。
+//!
+//! `{base}` 占位语义：
+//!   - `{base}`    → 去掉版本段的主机地址，如 `https://relay.example.com`；
+//!   - `{baseUrl}` → 原样存储的 Base URL，如 `https://relay.example.com/v1`。
+//!   两种占位用于兼容「用户填的 Base URL 带不带 /v1」两种情况。
+
 
 use std::time::Duration;
 
@@ -72,16 +66,14 @@ impl BalanceOutcome {
     }
 }
 
-/* ---------------------------------------------------------------------------
- * 主入口
- * ------------------------------------------------------------------------- */
+// ---- 主入口 ----
 
 /// 按适配器类型查询余额。
 ///
 /// # 参数
 /// - `client`: 复用的 reqwest 客户端（由调用方控制超时与连接池）
 /// - `base_url`: 该 Key 的 Base URL（可能带也可能不带版本段）
-/// - `api_key`: Key 明文，仅用于构造 Authorization 头，**不得**进日志
+/// - `api_key`: Key 明文，仅用于构造 Authorization 头，不得进日志
 pub async fn query(
     client: &reqwest::Client,
     base_url: &str,
@@ -111,9 +103,7 @@ pub async fn query(
     }
 }
 
-/* ---------------------------------------------------------------------------
- * 内置：one-api / new-api 系
- * ------------------------------------------------------------------------- */
+// ---- 内置：one-api / new-api 系 ----
 
 /// one-api 系中转站的余额查询。
 ///
@@ -154,7 +144,7 @@ async fn query_oneapi(client: &reqwest::Client, base_url: &str, api_key: &str) -
         );
     };
 
-    // 关键：one-api 的 total_usage 单位是**美分**，除以 100 才是美元
+    // 关键：one-api 的 total_usage 单位是美分，除以 100 才是美元
     let used_usd = used_cents / 100.0;
 
     BalanceOutcome {
@@ -165,9 +155,7 @@ async fn query_oneapi(client: &reqwest::Client, base_url: &str, api_key: &str) -
     }
 }
 
-/* ---------------------------------------------------------------------------
- * 内置：DeepSeek 官方
- * ------------------------------------------------------------------------- */
+// ---- 内置：DeepSeek 官方 ----
 
 /// DeepSeek 官方余额查询。
 ///
@@ -179,7 +167,7 @@ async fn query_oneapi(client: &reqwest::Client, base_url: &str, api_key: &str) -
 ///       "granted_balance": "10.00", "topped_up_balance": "100.00" } ] }
 /// ```
 ///
-/// `total_balance` 是**字符串**（且已包含赠金），由 `as_f64` 直接消化。
+/// `total_balance` 是字符串（且已包含赠金），由 `as_f64` 直接消化。
 /// 多币种账户会返回多个 `balance_infos`，这里取第一条 —— 与官方文档的
 /// 「主币种在前」一致；要精确区分币种请用「自定义」余额接口。
 async fn query_deepseek(client: &reqwest::Client, base_url: &str, api_key: &str) -> BalanceOutcome {
@@ -259,9 +247,7 @@ async fn get_json(
     })
 }
 
-/* ---------------------------------------------------------------------------
- * 自定义适配器
- * ------------------------------------------------------------------------- */
+// ---- 自定义适配器 ----
 
 /// 用户自定义余额接口。
 async fn query_custom(
@@ -375,9 +361,7 @@ async fn query_custom(
     }
 }
 
-/* ---------------------------------------------------------------------------
- * 工具
- * ------------------------------------------------------------------------- */
+// ---- 工具 ----
 
 /// 去掉 Base URL 末尾的版本段（`/v1`、`/v2`、`/api/v3` 之类），得到主机地址。
 ///
@@ -480,9 +464,7 @@ pub fn timeout_from_secs(secs: u64) -> Duration {
     Duration::from_secs(secs.clamp(5, 300))
 }
 
-/* ---------------------------------------------------------------------------
- * 单元测试
- * ------------------------------------------------------------------------- */
+// ---- 单元测试 ----
 
 #[cfg(test)]
 mod tests {

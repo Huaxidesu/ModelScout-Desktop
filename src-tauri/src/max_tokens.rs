@@ -1,51 +1,38 @@
-/**
- * ============================================================================
- * ModelScout —— 超大 max_tokens 报错解析器
- * ============================================================================
- *
- * 【背景】
- * 任务书第三节第 5 条要求：当模型 ID 未命中本地字典时，
- * **故意发送超大 max_tokens（如 999999）**，让服务端报错，
- * 再从错误信息里提取真实的上下文窗口 / 输出上限。
- *
- * 这种做法之所以可行，是因为主流 OpenAI 兼容实现都会在错误里回显约束值，
- * 例如：
- *
- *   OpenAI / Azure:
- *     "Invalid 'max_tokens': integer above the maximum value. Please reduce
- *      your prompt or set max_tokens to at most 16384."
- *     "This model's maximum context length is 128000 tokens."
- *
- *   DeepSeek / Moonshot / 智谱:
- *     "max_tokens is too large: 999999. This model supports at most 8192
- *      completion tokens."
- *
- *   vLLM / Ollama / LM Studio（本地部署，报错风格差异最大）:
- *     "max_tokens 999999 is greater than the maximum model length 4096"
- *     "# 'max_tokens' must be less than or equal to 2048"
- *     "The requested max_tokens (999999) exceeds the maximum allowed output
- *      length of 4096 tokens."
- *
- * 【本模块职责】
- * 用一组**从严格到宽松**的正则，从任意文本中提取：
- *   - 单次输出上限（max output limit）
- *   - 上下文窗口上限（context length）
- * 并返回命中值与可信度，交由 `probe.rs` 决定是否采纳。
- *
- * 【设计原则】
- * 1. 宁可返回 None 也不要返回错误数字 —— 一个编造出来的 128000
- *    比「未知」对用户的伤害更大。
- * 2. 数字必须落在合理区间内（见 MIN/MAX 常量），超出即视为解析噪声丢弃。
- * 3. 支持 `128k` / `128K` / `1.5m` 这类缩写写法。
- * ============================================================================
- */
+//! 超大 max_tokens 报错解析器。
+//!
+//! 背景：模型 ID 未命中本地字典时，发送超大 max_tokens（如 999999）
+//! 让服务端报错，再从错误信息里提取真实的上下文窗口 / 输出上限。
+//! 可行依据是主流 OpenAI 兼容实现都会在错误里回显约束值，例如：
+//!
+//!  OpenAI / Azure:
+//!    "Invalid 'max_tokens': integer above the maximum value. Please reduce
+//!     your prompt or set max_tokens to at most 16384."
+//!    "This model's maximum context length is 128000 tokens."
+//!
+//!  DeepSeek / Moonshot / 智谱:
+//!    "max_tokens is too large: 999999. This model supports at most 8192
+//!     completion tokens."
+//!
+//!  vLLM / Ollama / LM Studio（本地部署，报错风格差异最大）:
+//!    "max_tokens 999999 is greater than the maximum model length 4096"
+//!    "# 'max_tokens' must be less than or equal to 2048"
+//!    "The requested max_tokens (999999) exceeds the maximum allowed output
+//!     length of 4096 tokens."
+//!
+//! 本模块职责：用一组从严格到宽松的正则，从任意文本中提取
+//! 单次输出上限（max output limit）与上下文窗口上限（context length），
+//! 返回命中值与可信度，交由 `probe.rs` 决定是否采纳。
+//!
+//! 设计原则：
+//! 1. 宁可返回 None 也不返回错误数字——编造的 128000 比「未知」伤害更大；
+//! 2. 数字必须落在合理区间内（见 MIN/MAX 常量），超出即视为解析噪声丢弃；
+//! 3. 支持 `128k` / `128K` / `1.5m` 缩写写法。
+
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-/* ---------------------------------------------------------------------------
- * 合理区间约束
- * ------------------------------------------------------------------------- */
+// ---- 合理区间约束 ----
 
 /// 输出上限的合理最小值。小于此值的数字基本可以判定不是「输出上限」，
 /// 而是错误信息里的其他数字（例如状态码、请求 id 片段）。
@@ -60,9 +47,7 @@ const MIN_CONTEXT_LIMIT: u64 = 512;
 /// 上下文窗口的合理最大值。
 const MAX_CONTEXT_LIMIT: u64 = 32_000_000;
 
-/* ---------------------------------------------------------------------------
- * 正则集合
- * ------------------------------------------------------------------------- */
+// ---- 正则集合 ----
 
 /// 数字字面量：支持 `1234`、`1,234`、`1_234` 三种分组写法，也支持 `128k` / `1.5m` 缩写。
 ///
@@ -103,7 +88,7 @@ static OUTPUT_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
         //
         // 【语义说明】vLLM 在请求的 max_tokens 超过模型总长度时会回这句。
         // 虽然字面写的是 "model length"，但当请求值就是 max_tokens 时，
-        // 该约束实际作用于**单次输出**，因此归入输出上限。
+        // 该约束实际作用于单次输出，因此归入输出上限。
         r"(?i)(?:greater|larger|more)\s+than[^.\n]{0,40}?(?:maximum|max|limit)[^.\n]{0,40}?" .to_string() + NUM,
         // ---- 中文：国内服务商常见表述 ----
         // "单次最大输出 8192" / "最大输出长度不能超过 8192"
@@ -148,7 +133,7 @@ static CONTEXT_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
 /// 抓到里面的某个数字，从而产生误判。
 ///
 /// 【为什么必须包含 "maximum context length" 这类「中性」表述】
-/// 很多服务端的上下文超限报错**不含** too large / exceed 之类的词：
+/// 很多服务端的上下文超限报错不含 too large / exceed 之类的词：
 ///
 /// ```text
 /// "This model's maximum context length is 128000 tokens.
@@ -178,9 +163,7 @@ static TOO_LARGE_HINT: Lazy<Regex> = Lazy::new(|| {
     .expect("TOO_LARGE_HINT 正则编译失败")
 });
 
-/* ---------------------------------------------------------------------------
- * 解析结果
- * ------------------------------------------------------------------------- */
+// ---- 解析结果 ----
 
 /// 一次上限解析的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,9 +183,7 @@ impl LimitParseResult {
     }
 }
 
-/* ---------------------------------------------------------------------------
- * 数字提取工具
- * ------------------------------------------------------------------------- */
+// ---- 数字提取工具 ----
 
 /// 把正则捕获组 1（数字本体）与捕获组 2（k/m 后缀）还原为 u64。
 ///
@@ -250,9 +231,7 @@ fn first_valid_number(regex: &Regex, text: &str, min: u64, max: u64) -> Option<(
     None
 }
 
-/* ---------------------------------------------------------------------------
- * 主入口
- * ------------------------------------------------------------------------- */
+// ---- 主入口 ----
 
 /// 从上游错误文本中解析上下文窗口与输出上限。
 ///
@@ -264,7 +243,7 @@ fn first_valid_number(regex: &Regex, text: &str, min: u64, max: u64) -> Option<(
 ///
 /// # 行为说明
 /// 1. 先做「是否在抱怨参数过大」的前置检查，不满足直接返回空结果。
-/// 2. 再依次用 OUTPUT_PATTERNS 匹配。**取所有模式中的最大值**，
+/// 2. 再依次用 OUTPUT_PATTERNS 匹配。取所有模式中的最大值，
 ///    因为错误信息里往往先出现请求值（999999）再出现约束值（16384），
 ///    取最大值反而更稳健地拿到那个「不超过」的约束。
 /// 3. 最后用 CONTEXT_PATTERNS 匹配上下文窗口。
@@ -363,9 +342,7 @@ pub fn parse_context(text: &str) -> Option<u64> {
     parse_limits(text).context_limit
 }
 
-/* ---------------------------------------------------------------------------
- * 单元测试
- * ------------------------------------------------------------------------- */
+// ---- 单元测试 ----
 
 #[cfg(test)]
 mod tests {

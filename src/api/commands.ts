@@ -1,20 +1,12 @@
 /**
- * ============================================================================
- * ModelScout —— 命令调用层（前端唯一 invoke 出口）
- * ============================================================================
+ * 命令调用层：前端唯一的 invoke 出口。
  *
- * 【为什么单独建这一层】
- *   1. 阶段 5 QA 要求「逐一核对前端 invoke 命令名 == Rust 注册名」。
- *      把所有调用集中在此，命令名字符串只来自 `COMMAND_NAMES` 常量。
- *   2. 统一错误处理：Rust 端返回的 `CommandError` 是一个对象
- *      （{ kind, message, httpStatus }），不是字符串。
- *      直接 `catch (e) { alert(e) }` 会显示 `[object Object]`。
- *      这里统一把它规约成 `ProbeApiError` 实例。
- *
- * 【Tauri v2 要点（任务书第七节第 1 条）】
- *   invoke 必须从 `@tauri-apps/api/core` 导入，
- *   **不是** v1 的 `@tauri-apps/api/tauri`。
- * ============================================================================
+ * - 所有命令调用集中于此，命令名字符串只来自 `COMMAND_NAMES` 常量，
+ *   便于与 Rust 侧注册名逐一核对；
+ * - 统一错误处理：Rust 端返回的 `CommandError` 是对象
+ *   （{ kind, message, httpStatus }），直接展示会得到 `[object Object]`，
+ *   此处统一规约为 `ProbeApiError` 实例；
+ * - Tauri v2 的 invoke 从 `@tauri-apps/api/core` 导入（v1 位于 `@tauri-apps/api/tauri`）。
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -39,9 +31,7 @@ import type {
   VaultStatus,
 } from '@/types/contracts'
 
-/* ---------------------------------------------------------------------------
- * 统一错误类型
- * ------------------------------------------------------------------------- */
+// ---- 统一错误类型 ----
 
 /**
  * 前端侧统一的后端错误表示。
@@ -50,7 +40,7 @@ import type {
  *   { kind: 'keyInvalid', message: '...', httpStatus: 401 }
  *
  * 但 invoke 在某些情况下（例如命令名拼错、权限被拒）会抛出
- * 一个**纯字符串**。本类统一吸收这两种形态。
+ * 一个纯字符串。本类统一吸收这两种形态。
  */
 export class ProbeApiError extends Error {
   /** 错误分类；无法归类时为 'unknown' */
@@ -118,18 +108,16 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
     return await invoke<T>(command, args)
   } catch (raw) {
     const error = normalizeError(raw)
-    // 在控制台留痕，但**不**包含任何 Key（后端已保证 message 脱敏）
+    // 在控制台留痕，但不包含任何 Key（后端已保证 message 脱敏）
     console.error(`[ModelScout] 命令 ${command} 调用失败：`, error.message)
     throw error
   }
 }
 
-/* ---------------------------------------------------------------------------
- * 6 + 1 个命令的封装
- * ------------------------------------------------------------------------- */
+// ---- 探测模块命令封装 ----
 
 /**
- * 【命令 1/7】拉取模型列表（不做能力探测）。
+ * 拉取模型列表（不做能力探测）。
  *
  * 对应 Rust：`commands::list_models`
  * 前端传入的参数名按 Tauri v2 约定为 camelCase，
@@ -140,12 +128,12 @@ export function listModels(config: ProbeConfig): Promise<ModelListResult> {
 }
 
 /**
- * 【命令 2/7】连通性与鉴权预检。
+ * 连通性与鉴权预检。
  *
  * 对应 Rust：`commands::ping_connection`
  *
- * 注意：该命令**永不抛错**，失败信息在返回值的 `error` 字段里。
- * 因此这里不 try/catch 成异常，而是原样返回给调用方判断 `ok`。
+ * 注意：该命令不抛出异常，失败信息在返回值的 `error` 字段里，
+ * 因此不 try/catch，而是原样返回给调用方判断 `ok`。
  *
  * 入参与 `start_probe` 一致，直接传整个 `ProbeConfig`：
  * 密钥来源（明文 / 环境变量 / 凭据管理器）由后端统一解析，
@@ -156,7 +144,7 @@ export function pingConnection(config: ProbeConfig): Promise<PingResult> {
 }
 
 /**
- * 【命令 3/7】启动完整探测流水线。
+ * 启动完整探测流水线。
  *
  * 对应 Rust：`commands::start_probe`
  *
@@ -167,7 +155,7 @@ export function startProbe(config: ProbeConfig): Promise<ProbeRunSummary> {
 }
 
 /**
- * 【命令 4/7】请求中止当前探测。
+ * 请求中止当前探测。
  *
  * 对应 Rust：`commands::stop_probe`
  *
@@ -178,7 +166,7 @@ export function stopProbe(): Promise<ProbeSnapshot> {
 }
 
 /**
- * 【命令 5/7】查询当前探测快照。
+ * 查询当前探测快照。
  *
  * 对应 Rust：`commands::get_probe_state`
  */
@@ -187,7 +175,7 @@ export function getProbeState(): Promise<ProbeSnapshot> {
 }
 
 /**
- * 【命令 6/7】把生成的配置写入磁盘。
+ * 把生成的配置写入磁盘。
  *
  * 对应 Rust：`commands::save_config_file`
  */
@@ -196,29 +184,23 @@ export function saveConfigFile(request: SaveConfigRequest): Promise<SaveConfigRe
 }
 
 /**
- * 【辅助】读取内置字典条目数，用于「关于」区域展示数据新鲜度。
+ * 读取内置字典条目数，用于「关于」区域展示数据新鲜度。
  *
- * 该命令未列入 COMMAND_NAMES 常量表（非任务书要求的核心命令），
- * 但同样必须与 lib.rs 的注册名一致。
+ * 该命令未列入 COMMAND_NAMES 常量表，但同样必须与 lib.rs 的注册名一致。
  */
 export function getDictionaryInfo(): Promise<{ entryCount: number }> {
   return call<{ entryCount: number }>('get_dictionary_info')
 }
 
-/* ---------------------------------------------------------------------------
- * Key 管家（Beta）—— 13 个命令
- * ---------------------------------------------------------------------------
- * 与探测模块共用同一个 `call<T>()` 出口，因此错误同样是规约后的
- * `ProbeApiError`，组件层可以用同一套 `instanceof` 判断处理。
- *
- * 命名沿用文件里既有的 `动词+名词` 风格；命令名一律取自 `COMMAND_NAMES`，
- * 不允许在调用点写字面量。
- * ------------------------------------------------------------------------- */
+// ---- Key 管家（Beta）命令 ----
+// 与探测模块共用同一个 `call<T>()` 出口，错误同样规约为
+// `ProbeApiError`，组件层可用同一套 `instanceof` 判断处理。
+// 命令名一律取自 `COMMAND_NAMES`，不允许在调用点写字面量。
 
 /**
  * 批量文本 → 提取 Key → 前缀识别 → 入列（去重）。
  *
- * 提取在**后端**完成（与 `utils/parseConnection.ts` 同一套正则思路），
+ * 提取在后端完成（与 `utils/parseConnection.ts` 同一套正则思路），
  * 前端只负责把整段文本原样传过去。
  */
 export function keyButlerImport(request: KeyImportRequest): Promise<KeyImportResult> {
@@ -245,9 +227,9 @@ export function keyButlerList(): Promise<KeyEntry[]> {
 }
 
 /**
- * 返回单个完整 Key —— **仅供一键复制**。
+ * 返回单个完整 Key，仅供一键复制。
  *
- * 调用方拿到后应立即复制并把变量置空，不要存进 store 或写进日志。
+ * 调用方拿到后应立即复制并把变量置空，不得存入 store 或写入日志。
  */
 export function keyButlerReveal(id: string): Promise<string> {
   return call<string>(COMMAND_NAMES.KEY_BUTLER_REVEAL, { id })

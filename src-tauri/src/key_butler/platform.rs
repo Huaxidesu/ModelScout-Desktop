@@ -1,39 +1,29 @@
-/**
- * ============================================================================
- * ModelScout —— Key 管家：平台识别规则表
- * ============================================================================
- *
- * 【职责】
- * 按 API Key 的**形态**判断它属于哪个平台，并给出该平台默认的
- * 余额接口适配器与 Base URL。
- *
- * 【两种匹配方式】
- *   1. `prefix`（默认）：Key 以该前缀开头即命中。
- *   2. `pattern`：可选的正则。**存在时以正则为准**，用于「前缀与别人撞车、
- *      只能靠形态区分」的平台。
- *      典型例子：DeepSeek 官方 Key 是 `sk-` + 32 位十六进制，而 `sk-` 同时是
- *      大量 OpenAI 兼容中转站的通用前缀 —— 只靠前缀必然把 DeepSeek 误判成
- *      「通用中转」。加上 `^sk-[0-9a-fA-F]{32}$` 之后就能精确命中。
- *
- * 【匹配语义：正则优先、长前缀优先】
- *   - 带 `pattern` 的规则先于纯前缀规则尝试（它更具体）；
- *   - 同为纯前缀时按前缀长度**降序**，保证 `sk-ant-` 先于 `sk-` 命中。
- *   排序在加载时一次性完成，因此数据文件里怎么写都不会出错。
- *
- * 【autoDetect = false：只给「手动指定厂商」用的目录条目】
- *   有些平台的 Key 形态与通用中转完全一样（Moonshot / 硅基流动都是 `sk-`），
- *   自动识别永远分不出来。这类厂商在本表里登记 `autoDetect: false`：
- *     - **不参与**自动识别（`identify` 跳过）
- *     - **不参与**批量粘贴的提取前缀派生（`prefixes` 跳过）
- *     - 但可以通过 `defaults_for()` 取到它的默认 Base URL / 余额适配器，
- *       供「导入时手动指定厂商」与「批量改平台」使用。
- *
- * 【数据来源与加载顺序】
- *   1. 用户文件 `{app_data_dir}/platform_prefixes.json`（优先，可覆盖扩充）
- *   2. 打包资源 `resources/platform_prefixes.json`
- *   3. 编译期内嵌（`include_str!` 同一份文件），保证资源丢失时不降级
- * ============================================================================
- */
+//! Key 管家：平台识别规则表。
+//!
+//! 按 API Key 的形态判断所属平台，并给出该平台默认的
+//! 余额接口适配器与 Base URL。
+//!
+//! 两种匹配方式：
+//!   1. `prefix`（默认）：Key 以该前缀开头即命中；
+//!   2. `pattern`（可选）：正则。存在时以正则为准，用于前缀与其它平台
+//!      撞车、只能靠形态区分的情况——典型例子：DeepSeek 官方 Key 是
+//!      `sk-` + 32 位十六进制，而 `sk-` 同时是大量 OpenAI 兼容中转站的
+//!      通用前缀，仅靠前缀必然误判；加上 `^sk-[0-9a-fA-F]{32}$` 后可精确命中。
+//!
+//! 匹配语义：正则优先、长前缀优先。带 `pattern` 的规则先于纯前缀规则
+//! 尝试（更具体）；同为纯前缀时按前缀长度降序，保证 `sk-ant-` 先于 `sk-`
+//! 命中。排序在加载时一次性完成，数据文件的书写顺序不影响结果。
+//!
+//! `autoDetect = false` 的条目只供「手动指定厂商」使用：有些平台的 Key
+//! 形态与通用中转完全一样（Moonshot / 硅基流动均为 `sk-`），自动识别
+//! 无法区分。这类条目不参与自动识别与提取前缀派生，但可通过
+//! `defaults_for()` 取默认 Base URL / 余额适配器，供导入时手动指定
+//! 厂商与批量改平台使用。
+//!
+//! 数据来源与加载顺序：
+//!   1. 用户文件 `{app_data_dir}/platform_prefixes.json`（优先，可覆盖扩充）；
+//!   2. 打包资源 `resources/platform_prefixes.json`；
+//!   3. 编译期内嵌（`include_str!` 同一份文件），保证资源丢失时不降级。
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -41,7 +31,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-/// 编译期内嵌的兜底规则（与打包资源是同一份文件）。
+/// 编译期内嵌的后备规则（与打包资源是同一份文件）。
 const BUILTIN_JSON: &str = include_str!("../../resources/platform_prefixes.json");
 
 /// 未命中任何规则时的平台标识。
@@ -59,7 +49,7 @@ pub struct PlatformRule {
     /// `autoDetect = false` 的目录条目可以省略（省略即空串，不参与匹配）。
     #[serde(default)]
     pub prefix: String,
-    /// 可选正则：存在时**以正则为准**（见文件头说明）。
+    /// 可选正则：存在时以正则为准（见文件头说明）。
     #[serde(default)]
     pub pattern: Option<String>,
     /// 是否参与「按 Key 形态自动识别」。目录条目（仅供手动指定厂商）设 false。
@@ -97,9 +87,7 @@ struct CompiledRule {
 /// 全局规则表（进程内只加载一次）。
 static RULES: OnceLock<Vec<CompiledRule>> = OnceLock::new();
 
-/* ---------------------------------------------------------------------------
- * 加载
- * ------------------------------------------------------------------------- */
+// ---- 加载 ----
 
 /// 解析一段 JSON 文本为规则列表。
 fn parse_rules(text: &str) -> Result<Vec<PlatformRule>, String> {
@@ -169,7 +157,7 @@ fn load_file(path: &Path) -> Option<Vec<CompiledRule>> {
 /// - `app_data_dir`: 应用数据目录（用户可在此放同名文件覆盖扩充）
 ///
 /// # 返回
-/// 实际生效的规则条数。本函数**不会失败** —— 任何异常都回退到内嵌规则。
+/// 实际生效的规则条数。本函数不会失败 —— 任何异常都回退到内嵌规则。
 pub fn init(resource_dir: &Path, app_data_dir: Option<&Path>) -> usize {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
@@ -215,7 +203,7 @@ pub fn init(resource_dir: &Path, app_data_dir: Option<&Path>) -> usize {
     rules_len()
 }
 
-/// 当前生效的规则表；若尚未初始化则用内嵌规则兜底。
+/// 当前生效的规则表；若尚未初始化则使用内嵌后备规则。
 fn rules() -> &'static Vec<CompiledRule> {
     RULES.get_or_init(|| {
         let rules = parse_rules(BUILTIN_JSON).unwrap_or_default();
@@ -250,9 +238,7 @@ pub fn prefixes() -> Vec<String> {
     result
 }
 
-/* ---------------------------------------------------------------------------
- * 识别
- * ------------------------------------------------------------------------- */
+// ---- 识别 ----
 
 /// 未命中任何规则时的合成规则（platform = `unknown`）。
 fn unknown_rule() -> PlatformRule {
@@ -313,9 +299,7 @@ pub fn defaults_for(platform: &str) -> Option<(Option<String>, String)> {
         })
 }
 
-/* ---------------------------------------------------------------------------
- * 单元测试
- * ------------------------------------------------------------------------- */
+// ---- 单元测试 ----
 
 #[cfg(test)]
 mod tests {
@@ -337,7 +321,7 @@ mod tests {
 
     /// 回归：用户实测反馈 —— DeepSeek 官方 Key 曾被识别成「通用中转」。
     ///
-    /// DeepSeek 的 Key 是 `sk-` + 32 位十六进制，与通用 `sk-` 兜底规则前缀完全相同，
+    /// DeepSeek 的 Key 是 `sk-` + 32 位十六进制，与通用 `sk-` 后备规则前缀完全相同，
     /// 只有靠 `pattern` 才能区分开。
     #[test]
     fn deepseek_key_is_not_swallowed_by_generic_sk_rule() {
@@ -399,7 +383,7 @@ mod tests {
         assert_eq!(base.as_deref(), Some("https://api.deepseek.com/v1"));
         assert_eq!(endpoint, "builtin-deepseek");
 
-        // 兜底平台：无 Base URL，走 one-api 适配器
+        // 后备平台：无 Base URL，走 one-api 适配器
         let (base, endpoint) = defaults_for("unknown").expect("unknown 必须有兜底");
         assert_eq!(base, None);
         assert_eq!(endpoint, UNKNOWN_ENDPOINT);
@@ -413,7 +397,7 @@ mod tests {
         let prefixes = prefixes();
         assert!(prefixes.contains(&"sk-ant-".to_string()));
         assert!(prefixes.contains(&"sk-".to_string()));
-        // sk- 在表里出现多次（deepseek / 兜底），派生结果里只能有一条
+        // sk- 在表里出现多次（deepseek / 后备通用规则），派生结果里只能有一条
         assert_eq!(prefixes.iter().filter(|p| *p == "sk-").count(), 1);
         assert!(!prefixes.iter().any(|p| p.is_empty()));
     }

@@ -9,17 +9,17 @@ ModelScout —— JSON 语法检查（阶段 5 QA 系统性检查）
     failed to parse JSON: expected value at line 1 column 1
 
 根因是 `src-tauri/capabilities/default.json` 顶部写了 `/** ... */` 注释块。
-JSON 标准**不允许注释**，而 Tauri 用 serde_json 做严格解析。
+JSON 标准不允许注释，而 Tauri 用 serde_json 做严格解析。
 
 同类问题还有 `src-tauri/resources/model_params.json`（用了 `#` 注释块），
-它不会导致编译失败，而是让运行期的外部字典加载**静默退化为内嵌字典** ——
+它不会导致编译失败，而是让运行期的外部字典加载静默退化为内嵌字典 ——
 这种隐性故障靠肉眼几乎不可能发现。
 
 因此把「JSON 文件必须是严格合法 JSON」做成脚本检查，
 比留在交付报告的「注意事项」里可靠得多。
 
 【豁免名单】
-TypeScript 的 tsconfig 系列是 **JSONC** 格式，官方允许注释，
+TypeScript 的 tsconfig 系列是 JSONC 格式，官方允许注释，
 因此显式跳过（不是漏检，是有意为之）。
 
 【用法】

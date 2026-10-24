@@ -1,16 +1,9 @@
 /**
- * ============================================================================
- * ModelScout —— 探测流程组合式函数
- * ============================================================================
+ * 探测流程组合式函数：把「UI 事件 → 命令调用 → 事件订阅 → store 更新」
+ * 这条链路收拢到一处，组件只负责调用 `start()` / `stop()` / `ping()` 并渲染状态。
  *
- * 【职责】
- * 把「UI 事件 → 命令调用 → 事件订阅 → store 更新」这条链路收拢到一处，
- * 让组件只负责调用 `start()` / `stop()` / `ping()` 并渲染状态。
- *
- * 【生命周期要点】
- * 事件订阅必须在组件挂载时建立、卸载时释放。
+ * 生命周期：事件订阅在组件挂载时建立、卸载时释放；
  * 本函数暴露 `teardown()`，由 App.vue 在 onUnmounted 中调用。
- * ============================================================================
  */
 
 import { onUnmounted, ref } from 'vue'
@@ -28,21 +21,17 @@ import { subscribeAll } from '@/api/events'
 import { useProbeStore } from '@/stores/probe'
 import type { ModelBrief, PingResult } from '@/types/contracts'
 
-/* ---------------------------------------------------------------------------
- * 组件外可用的消息提示实例
- * ------------------------------------------------------------------------- */
+// ---- 组件外可用的消息提示实例 ----
 
 /**
- * 【为什么用 createDiscreteApi 而不是 useMessage】
+ * 使用 createDiscreteApi 而不是 useMessage 的原因：
+ * `useMessage()` 只能在 NMessageProvider 的组件树内部、setup 期间调用；
+ * 而 useProbe() 可在任意时机被调用，且需要脱离组件上下文
+ * （事件回调、异步流程）弹出提示。
  *
- * Naive UI 的 `useMessage()` 只能在「NMessageProvider 的组件树内部」调用，
- * 且必须在 setup 期间执行。而 useProbe() 是一个可以在任意时机被调用的
- * 组合式函数，并且它会脱离组件上下文（例如事件回调、异步流程）弹出提示。
- *
- * `createDiscreteApi(['message'])` 会在首次调用时创建一个脱离组件树的
- * 独立渲染上下文，正是官方为「在组件外调用 message」提供的方案。
- * 代价是它不受 NConfigProvider 的主题影响 —— 因此此处在构造时显式
- * 传入与 App.vue 一致的暗色主题，保证视觉统一。
+ * `createDiscreteApi(['message'])` 创建脱离组件树的独立渲染上下文，
+ * 是官方为组件外调用 message 提供的方案。代价是不受 NConfigProvider
+ * 主题影响，因此构造时显式传入与 App.vue 一致的暗色主题保证视觉统一。
  */
 const { message } = createDiscreteApi(['message'], {
   configProviderProps: {
@@ -50,9 +39,7 @@ const { message } = createDiscreteApi(['message'], {
   },
 })
 
-/* ---------------------------------------------------------------------------
- * 错误分类的中文标签与颜色（供 UI 复用）
- * ------------------------------------------------------------------------- */
+// ---- 错误分类的中文标签与颜色（供 UI 复用） ----
 
 /** 错误分类 → 中文标签。与 Rust 的 `ProbeErrorKind::label()` 保持一致。 */
 export const ERROR_KIND_LABELS: Record<string, string> = {
@@ -96,9 +83,7 @@ export const LIMIT_SOURCE_LABELS: Record<string, string> = {
   unknown: '未知',
 }
 
-/* ---------------------------------------------------------------------------
- * 主组合式函数
- * ------------------------------------------------------------------------- */
+// ---- 主组合式函数 ----
 
 export function useProbe() {
   const store = useProbeStore()
@@ -215,10 +200,8 @@ export function useProbe() {
   /**
    * 启动完整探测。
    *
-   * 【重要】这里**不**使用 `store.beginRun()` 预置状态，
-   * 因为运行 ID 是后端生成的，前端无法提前知道。
-   * 取而代之：先清空结果并把状态置为 running，
-   * 然后让 `startProbe` 的返回与事件共同填充数据。
+   * 不使用 `store.beginRun()` 预置状态：运行 ID 由后端生成，前端无法提前知道。
+   * 先清空结果并把状态置为 running，然后让 `startProbe` 的返回与事件共同填充数据。
    */
   async function start(): Promise<void> {
     if (store.isRunning) {
@@ -363,9 +346,7 @@ export function useProbe() {
   }
 }
 
-/* ---------------------------------------------------------------------------
- * 通用格式化工具（供多个组件复用）
- * ------------------------------------------------------------------------- */
+// ---- 通用格式化工具（供多个组件复用） ----
 
 /**
  * 把毫秒格式化成人类可读时长。

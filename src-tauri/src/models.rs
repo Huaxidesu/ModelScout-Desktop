@@ -1,32 +1,21 @@
-/**
- * ============================================================================
- * ModelScout —— 数据契约模块（Rust 侧「唯一事实来源」的镜像）
- * ============================================================================
- *
- * 【核心约定】
- * 本文件中的**每一个**对外结构体都必须带：
- *     #[derive(Debug, Clone, Serialize, Deserialize)]
- *     #[serde(rename_all = "camelCase")]
- *
- * 否则前端拿到的将是 snake_case 字段，与 `src/types/contracts.ts` 不匹配。
- * 这是 Tauri v2 最常见的陷阱之一（任务书第七节第 3 条）。
- *
- * 字段顺序与 `contracts.ts` 中的接口保持一致，便于阶段 5 逐一交叉核对。
- * ============================================================================
- */
+//! 数据契约模块：Rust 侧「唯一事实来源」。
+//!
+//! 核心约定：本文件中的每一个对外结构体都必须带
+//! `#[derive(Debug, Clone, Serialize, Deserialize)]` 与
+//! `#[serde(rename_all = "camelCase")]`——否则前端拿到的是 snake_case
+//! 字段，与 `src/types/contracts.ts` 不匹配（Tauri v2 的常见陷阱）。
+//! 字段顺序与 `contracts.ts` 中的接口保持一致，便于逐一交叉核对。
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::ProbeError;
 
-/* ---------------------------------------------------------------------------
- * 一、基础枚举
- * ------------------------------------------------------------------------- */
+// ---- 基础枚举 ----
 
 /// 能力探测的三态结果。
 ///
 /// 与前端 `TriState` 对应。用三态而非 bool 的原因：
-/// 探测失败（例如上游 500）时**无法判定**支持与否，
+/// 探测失败（例如上游 500）时无法判定支持与否，
 /// 强行记为 false 会误导用户，故保留 `Unknown`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,7 +45,7 @@ impl TriState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LimitSource {
-    /// **接口在 `/models` 中直接声明**（最可信：服务端自己说的）
+    /// 接口在 `/models` 中直接声明（最可信：服务端自己说的）
     Declared,
     /// 命中本地参数字典，可信度高
     Dictionary,
@@ -164,16 +153,14 @@ impl Default for ApiKeySource {
     }
 }
 
-/* ---------------------------------------------------------------------------
- * 二、命令入参 / 出参结构体
- * ------------------------------------------------------------------------- */
+// ---- 二、命令入参 / 出参结构体 ----
 
 /// `start_probe` 的入参。
 ///
 /// 安全提示：`api_key` 字段是唯一持有 Key 明文的载体。
-/// 它**绝不**被序列化回前端（本结构体虽 derive 了 Serialize 以便日志调试，
+/// 它绝不被序列化回前端（本结构体虽 derive 了 Serialize 以便日志调试，
 /// 但全项目代码中没有任何一处把 ProbeConfig 直接 emit 出去），
-/// 也**绝不**被打印。参见 `error::redact_key`。
+/// 也绝不被打印。参见 `error::redact_key`。
 ///
 /// 当 `api_key_source` 不是 `Plain` 时，`api_key` 字段应留空 ——
 /// 明文由后端在 `resolve_api_key()` 里从环境变量 / 凭据管理器取出，
@@ -210,7 +197,7 @@ pub struct ProbeConfig {
 impl ProbeConfig {
     /// 规范化：裁剪空白、补全协议前缀、clamp 数值范围。
     ///
-    /// 这是**唯一**允许修正用户输入的地方，后续所有代码都可以假定
+    /// 这是唯一允许修正用户输入的地方，后续所有代码都可以假定
     /// `base_url` 是合法且不含尾部斜杠的绝对 URL。
     pub fn normalized(&self) -> Self {
         let mut base = self.base_url.trim().to_string();
@@ -285,7 +272,7 @@ impl ProbeConfig {
 
     /// 依据 `api_key_source` 解析出最终用于请求的明文 Key。
     ///
-    /// 这是**唯一**把「外部来源」转成明文的入口。返回值含敏感信息，
+    /// 这是唯一把「外部来源」转成明文的入口。返回值含敏感信息，
     /// 调用方只能把它交给 `ApiClient`，不得打印、不得回传前端。
     pub fn resolve_api_key(&self) -> Result<String, String> {
         match self.api_key_source {
@@ -373,7 +360,7 @@ pub struct ModelInfo {
 
     /// 能力数据的整体来源说明（中文），例如「接口声明（schema 2.4）」/「实测探测」/「混合」。
     ///
-    /// **为什么需要**：实测发现部分网关的 `/models` 声明可能与官方文档不符
+    /// 展示原因：部分网关的 `/models` 声明可能与官方文档不符
     /// （例如接口称某模型支持 tools、文档称不支持）。把来源显式标出来，
     /// 用户才能判断该采信谁，而不是盲信一个数字。
     #[serde(default)]
@@ -416,9 +403,9 @@ impl ModelInfo {
 /// 接口在 `/models` 响应中「自报」的能力（OpenRouter / 部分聚合网关的扩展 schema）。
 ///
 /// 全部字段都是 `Option`，语义很关键：
-/// - `Some(..)` = 接口**已明确声明**该能力 → 直接采信，**无需再发请求探测**
+/// - `Some(..)` = 接口已明确声明该能力 → 直接采信，无需再发请求探测
 ///   （省额度、更快、且比探测更准确）
-/// - `None`     = 接口**未声明** → 回退到真实请求探测（标准 OpenAI 接口走这条路）
+/// - `None`     = 接口未声明 → 回退到真实请求探测（标准 OpenAI 接口走这条路）
 ///
 /// 典型返回（某网关的扩展 schema）：
 ///
@@ -449,10 +436,10 @@ pub struct DeclaredCaps {
     pub supports_tools: Option<bool>,
     /// 是否支持图片输入（视觉/附件）
     pub supports_vision: Option<bool>,
-    /// 是否为**推理模型**（`supported_parameters` 中存在 `reasoning`）
+    /// 是否为推理模型（`supported_parameters` 中存在 `reasoning`）
     ///
-    /// 注意：这比「响应里出现 reasoning_content」更可靠 —— 实测发现
-    /// 部分网关对**所有**模型都会返回 `reasoning_content` 字段（可能为空），
+    /// 注意：这比「响应里出现 reasoning_content」更可靠：
+    /// 部分网关对所有模型都会返回 `reasoning_content` 字段（可能为空），
     /// 因此靠响应体判断会把非推理模型误判为推理模型。
     pub supports_reasoning: Option<bool>,
     /// 接口是否标记为就绪（`is_ready`）
@@ -537,9 +524,7 @@ pub struct ProbeRunSummary {
     pub elapsed_ms: u64,
 }
 
-/* ---------------------------------------------------------------------------
- * 三、事件 payload 结构体
- * ------------------------------------------------------------------------- */
+// ---- 三、事件 payload 结构体 ----
 
 /// 事件 `probe://progress` 的 payload。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -633,9 +618,7 @@ pub struct ProbeFatal {
     pub stage: ProbeStage,
 }
 
-/* ---------------------------------------------------------------------------
- * 四、快照结构体（供 get_probe_state 使用）
- * ------------------------------------------------------------------------- */
+// ---- 四、快照结构体（供 get_probe_state 使用） ----
 
 /// `get_probe_state` 的返回：任意时刻的实时状态。
 ///
@@ -657,9 +640,7 @@ pub struct ProbeSnapshot {
     pub models: Vec<ModelInfo>,
 }
 
-/* ---------------------------------------------------------------------------
- * 五、配置导出
- * ------------------------------------------------------------------------- */
+// ---- 五、配置导出 ----
 
 /// `save_config_file` 的入参。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -681,9 +662,7 @@ pub struct SaveConfigResult {
     pub path: String,
 }
 
-/* ---------------------------------------------------------------------------
- * 单元测试
- * ------------------------------------------------------------------------- */
+// ---- 单元测试 ----
 
 #[cfg(test)]
 mod tests {

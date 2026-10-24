@@ -118,7 +118,7 @@ PAIRS = [
     ("SaveConfigResult", "SaveConfigResult"),
 ]
 
-# Key 管家（Beta）的契约在独立文件里（模块隔离，见任务书「防混乱三原则」），
+# Key 管家（Beta）的契约在独立文件里（模块隔离原则），
 # 因此单独指定其 Rust 源文件再核对一遍。
 KEY_BUTLER_MODELS = ("src-tauri", "src", "key_butler", "models.rs")
 KEY_BUTLER_PAIRS = [

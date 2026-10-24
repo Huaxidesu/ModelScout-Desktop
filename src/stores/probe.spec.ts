@@ -1,25 +1,16 @@
 /**
- * ============================================================================
- * ModelScout —— 全局状态管理单元测试
- * ============================================================================
+ * 全局状态管理单元测试。
  *
- * 【为什么需要这个文件】（见 docs/DECISIONS.md D-37）
- *
- * D-37 中「界面永远 0/0」的缺陷有一条**前端数据链**：
+ * 重点锁定一条前端数据链的回归约束：
  *
  *     后端 run_engine → probe://model-done 事件 → applyModelDone → models
  *                                 ↘ applySummary（命令返回值）→ models
  *
- * 后端那一半已经由 `src-tauri/tests/engine_integration.rs` 覆盖；
- * **前端这一半此前完全没有测试**。而它恰恰是「把已经拿到的数据又清空」的地方：
- *
- *     `applySummary` 原本无条件执行 `models.value = summary.models`，
- *     于是当后端返回空数组时，会把事件路径辛苦填好的结果**覆盖成空**，
- *     界面显示「0/0 暂无探测结果」，而 `selectedIds` 里还留着 10 个 id
- *     —— 这正是用户截图里那个自相矛盾的「生成配置 (10)」。
- *
- * 所以这里专门锁住：**`applySummary` 收到空数组时不得清空已有结果**。
- * ============================================================================
+ * `applySummary` 曾无条件执行 `models.value = summary.models`，当后端
+ * 返回空数组时会把事件路径已填好的结果覆盖为空：界面显示「0/0 暂无探测
+ * 结果」，而 `selectedIds` 里仍保留已勾选的模型。
+ * 因此本文件专门约束：`applySummary` 收到空数组时不得清空已有结果。
+ * 后端侧由 `src-tauri/tests/engine_integration.rs` 覆盖。
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -28,9 +19,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useProbeStore } from './probe'
 import type { ModelInfo, ProbeModelDone, ProbeProgress, ProbeRunSummary } from '@/types/contracts'
 
-/* ---------------------------------------------------------------------------
- * 测试数据工厂
- * ------------------------------------------------------------------------- */
+// ---- 测试数据工厂 ----
 
 /** 构造一个字段完整的 ModelInfo，避免每个用例都写 17 个字段。 */
 function makeModel(id: string, overrides: Partial<ModelInfo> = {}): ModelInfo {
@@ -101,11 +90,9 @@ beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-/* ---------------------------------------------------------------------------
- * D-37 回归测试：applySummary 不得用空数组清空已有结果
- * ------------------------------------------------------------------------- */
+// ---- 回归测试：applySummary 不得用空数组清空已有结果 ----
 
-describe('applySummary —— D-37 回归', () => {
+describe('applySummary —— 空数组不清空已有结果', () => {
   it('后端返回空数组时，不得清空事件路径已经填好的结果', () => {
     const store = freshStore()
 
@@ -116,7 +103,7 @@ describe('applySummary —— D-37 回归', () => {
     expect(store.models).toHaveLength(3)
     expect(store.selectedIds).toHaveLength(3)
 
-    // 模拟：命令返回了一个**空** summary（正是 D-37 后端的症状）
+    // 模拟：命令返回一个空 summary（缺陷发生时的后端表现）
     store.applySummary(
       makeSummary({ status: 'failed', totalModels: 0, models: [], errors: [] }),
     )
@@ -163,9 +150,8 @@ describe('applySummary —— D-37 回归', () => {
     store.applySummary(makeSummary({ status: 'done', totalModels: 1, models: [makeModel('a')] }))
 
     expect(store.models.map((m) => m.id)).toEqual(['a'])
-    // 关键：勾选数量必须与「实际存在的模型」一致。
-    //   否则界面会显示「生成配置 (3)」而实际只能生成 1 个 ——
-    //   这正是 D-37 截图里「结果表 0/0、按钮却写生成配置 (10)」的成因。
+    // 关键：勾选数量必须与「实际存在的模型」一致，
+    // 否则界面会显示「生成配置 (3)」而实际只能生成 1 个。
     expect(store.selectedIds).toEqual(['a'])
   })
 
@@ -184,8 +170,8 @@ describe('applySummary —— D-37 回归', () => {
     })
 
     expect(store.models.map((m) => m.id)).toEqual(['real'])
-    // 幽灵 id 必须清掉；快照路径刻意**不**做自动全选
-    // （重同步是恢复现场，不应覆盖用户已有的勾选偏好）
+    // 幽灵 id 必须清掉；快照路径刻意不做自动全选
+    //（重同步是恢复现场，不应覆盖用户已有的勾选偏好）
     expect(store.selectedIds).not.toContain('ghost')
     expect(store.selectedIds).toEqual([])
   })
@@ -199,9 +185,7 @@ describe('applySummary —— D-37 回归', () => {
   })
 })
 
-/* ---------------------------------------------------------------------------
- * applyModelDone
- * ------------------------------------------------------------------------- */
+// ---- applyModelDone ----
 
 describe('applyModelDone', () => {
   it('新模型会被追加并自动勾选', () => {
@@ -237,9 +221,7 @@ describe('applyModelDone', () => {
   })
 })
 
-/* ---------------------------------------------------------------------------
- * applyProgress
- * ------------------------------------------------------------------------- */
+// ---- applyProgress ----
 
 describe('applyProgress', () => {
   it('写入 completed / total / percent 与阶段映射', () => {
@@ -268,9 +250,7 @@ describe('applyProgress', () => {
   })
 })
 
-/* ---------------------------------------------------------------------------
- * resetRun / beginRun
- * ------------------------------------------------------------------------- */
+// ---- resetRun / beginRun ----
 
 describe('resetRun 与 beginRun', () => {
   it('resetRun 清空全部结果与勾选，但保留配置', () => {
@@ -307,9 +287,7 @@ describe('resetRun 与 beginRun', () => {
   })
 })
 
-/* ---------------------------------------------------------------------------
- * applyFinished
- * ------------------------------------------------------------------------- */
+// ---- applyFinished ----
 
 describe('applyFinished', () => {
   it('写入终态与计数；done 时进度补到 100', () => {
@@ -333,9 +311,7 @@ describe('applyFinished', () => {
   })
 })
 
-/* ---------------------------------------------------------------------------
- * 勾选相关
- * ------------------------------------------------------------------------- */
+// ---- 勾选相关 ----
 
 describe('勾选逻辑', () => {
   function seedThree(store: ReturnType<typeof useProbeStore>) {
@@ -380,9 +356,7 @@ describe('勾选逻辑', () => {
   })
 })
 
-/* ---------------------------------------------------------------------------
- * patchModel（手动修改上限）
- * ------------------------------------------------------------------------- */
+// ---- patchModel（手动修改上限） ----
 
 describe('patchModel', () => {
   it('手工改上限会把来源标为 fallback', () => {
@@ -397,9 +371,7 @@ describe('patchModel', () => {
   })
 })
 
-/* ---------------------------------------------------------------------------
- * capabilityStats
- * ------------------------------------------------------------------------- */
+// ---- capabilityStats ----
 
 describe('capabilityStats', () => {
   it('按三态统计支持数量', () => {

@@ -1,35 +1,21 @@
 /**
- * ============================================================================
- * ModelScout —— DeepSeekHardness 配置生成器
- * ============================================================================
+ * DeepSeekHardness 配置生成器。
  *
- * 注意：重要免责说明
- *
- * DeepSeekHardness 并非本项目开发者维护的软件，其配置文件的确切格式
- * **基于模型训练数据中的公开信息整理**，可能存在以下偏差：
+ * 免责说明：DeepSeekHardness 非本项目维护的软件，其配置文件的确切格式
+ * 基于模型训练数据中的公开信息整理，可能存在以下偏差：
  *   - 字段名拼写（例如 `maxTokens` vs `max_tokens`）
  *   - 配置文件的扩展名（.json / .jsonc / .toml / .yaml）
  *   - 环境变量的注入方式
- *
- * 【交付要求】
  * 使用前请对照 DeepSeekHardness 仓库的最新 README / 示例配置核对。
- * 交付报告已将此列为「待人工确认」第二项。
  *
- * 【本文件的可维护性设计】
- * 全部格式假设集中在 `FORMAT_ASSUMPTIONS` 常量与三个渲染函数中。
- * 若官方格式与假设不符，只需修改这两处。
+ * 可维护性设计：全部格式假设集中在 `FORMAT_ASSUMPTIONS` 常量与
+ * 三个渲染函数中，官方格式与假设不符时只需修改这两处。
+ * 同时输出三种形态（JSONC / 严格 JSON / TOML）供用户在预览区切换，
+ * 选择与官方文档最匹配的一种。
  *
- * 同时为了让用户能在不确定时快速切换，本生成器**同时输出三种形态**：
- *   1. JSONC（带注释，最可能正确的形态）
- *   2. 严格 JSON
- *   3. TOML（部分此类工具使用 TOML）
- * 用户可以在预览区切换，选择最匹配官方文档的那一个。
- *
- * 【密钥写入方式】
- * 与 OpenCode 生成器保持一致，由 `apiKeyMode` 控制：
- *   - `plain`（默认）：直接写 `apiKey` 明文，复制即可用
- *   - `env`          ：写 `apiKeyEnv` 指向环境变量名，密钥不落文件
- * ============================================================================
+ * 密钥写入方式与 OpenCode 生成器一致，由 `apiKeyMode` 控制：
+ *   - `plain`（默认）：直接写 `apiKey` 明文，复制即可用；
+ *   - `env`：写 `apiKeyEnv` 指向环境变量名，密钥不落文件。
  */
 
 import type { ModelInfo } from '@/types/contracts'
@@ -40,9 +26,7 @@ import {
   inferProviderName,
 } from './naming'
 
-/* ---------------------------------------------------------------------------
- * 格式假设声明（集中在此，便于修正）
- * ------------------------------------------------------------------------- */
+// ---- 格式假设声明（集中在此，便于修正） ----
 
 /**
  * 本生成器对 DeepSeekHardness 配置格式所做的全部假设。
@@ -74,9 +58,7 @@ export const FORMAT_ASSUMPTIONS = {
   defaultFileName: 'deepseek-hardness.jsonc',
 } as const
 
-/* ---------------------------------------------------------------------------
- * 类型定义
- * ------------------------------------------------------------------------- */
+// ---- 类型定义 ----
 
 /** DeepSeekHardness 中的单个模型条目 */
 export interface HardnessModelEntry {
@@ -120,9 +102,7 @@ export interface HardnessConfig {
   providers: HardnessProviderEntry[]
 }
 
-/* ---------------------------------------------------------------------------
- * 生成参数
- * ------------------------------------------------------------------------- */
+// ---- 生成参数 ----
 
 export interface GenerateContext {
   /** Base URL */
@@ -155,8 +135,8 @@ interface ResolvedContext {
 /**
  * 把 `GenerateContext` 补齐成确定值。
  *
- * 与 opencode.ts 的同名函数保持同样的思路：对象构建与文本渲染
- * 共用一套默认值推断，避免「改了一处漏了另一处」。
+ * 与 opencode.ts 的同名函数同一思路：对象构建与文本渲染
+ * 共用一套默认值推断，避免多处实现不一致。
  */
 function resolveContext(context: GenerateContext): ResolvedContext {
   const providerId = (context.providerId ?? '').trim() || inferProviderKey(context.baseUrl)
@@ -179,9 +159,7 @@ function resolveContext(context: GenerateContext): ResolvedContext {
   }
 }
 
-/* ---------------------------------------------------------------------------
- * 主生成函数
- * ------------------------------------------------------------------------- */
+// ---- 主生成函数 ----
 
 /** 未能探测到上下文上限时的回退值（保守默认值） */
 const DEFAULT_CONTEXT = 8192
@@ -203,7 +181,7 @@ export function buildHardnessConfig(context: GenerateContext): HardnessConfig {
     name: model.displayName && model.displayName !== model.id ? model.displayName : model.id,
     contextWindow: model.contextLimit > 0 ? model.contextLimit : DEFAULT_CONTEXT,
     maxOutputTokens: model.maxOutputLimit > 0 ? model.maxOutputLimit : DEFAULT_OUTPUT,
-    // 三态中 unknown 一律按 false 处理 —— 在配置文件里，
+    // 三态中 unknown 一律按 false 处理：在配置文件里，
     // 「不确定但开启」比「不确定而关闭」风险更大（会触发运行时报错）
     supportsToolCall: model.supportsTools === 'supported',
     supportsVision: model.supportsVision === 'supported',
@@ -230,23 +208,17 @@ export function buildHardnessConfig(context: GenerateContext): HardnessConfig {
 }
 
 /*
- * 说明：这里原本还有 `sourceLabel` / `limitSourceText` 两个函数，
- * 用于把「上限来源」写进每个模型的注释里。随着逐条注释被移除
- * （用户反馈注释太多、淹掉配置本身），它们已无调用方。
- *
- * 上限来源信息本身没有丢 —— 它在界面的结果表格里以「接口声明 /
- * 字典 / 报错解析 / 手动」标签的形式展示，那才是用户真正需要它的地方。
+ * 上限来源信息不在配置中逐条标注：该信息在界面的结果表格里以
+ * 「接口声明 / 字典 / 报错解析 / 手动」标签展示，那才是用户需要它的地方。
  */
 
-/* ---------------------------------------------------------------------------
- * 三种渲染形态
- * ------------------------------------------------------------------------- */
+// ---- 三种渲染形态 ----
 
 /**
- * 渲染为带注释的 JSONC 文本（**推荐形态**）。
+ * 渲染为带注释的 JSONC 文本（推荐形态）。
  *
- * 与 opencode.ts 一致：**不给每个模型写注释** —— 模型一多，注释量就
- * 超过配置本身。探测依据在界面表格里看更清楚。
+ * 与 opencode.ts 一致：不给每个模型写注释——模型一多，注释量
+ * 会超过配置本身；探测依据在界面表格里查看更清楚。
  */
 export function renderHardnessJsonc(context: GenerateContext): string {
   const ctx = resolveContext(context)
@@ -316,7 +288,7 @@ export function renderHardnessJsonc(context: GenerateContext): string {
 }
 
 /**
- * 渲染为**严格 JSON**（无注释）。
+ * 渲染为严格 JSON（无注释）。
  */
 export function renderHardnessJson(context: GenerateContext): string {
   return JSON.stringify(buildHardnessConfig(context), null, 2)
@@ -325,11 +297,9 @@ export function renderHardnessJson(context: GenerateContext): string {
 /**
  * 渲染为 TOML 形态。
  *
- * 【为什么也要提供】
- * 部分此类本地推理调度工具使用 TOML。多提供一个形态的成本很低，
- * 却能显著提升「至少有一个能用」的概率。
- *
- * TOML 结构采用 `[[providers]]` + `[[providers.models]]` 的数组表语法。
+ * 部分此类本地推理调度工具使用 TOML；多提供一个形态成本很低，
+ * 可显著提升至少有一种形态可用的概率。
+ * 结构采用 `[[providers]]` + `[[providers.models]]` 的数组表语法。
  */
 export function renderHardnessToml(context: GenerateContext): string {
   const ctx = resolveContext(context)
@@ -384,9 +354,7 @@ export function renderHardnessToml(context: GenerateContext): string {
   return lines.join('\n')
 }
 
-/* ---------------------------------------------------------------------------
- * 内部工具
- * ------------------------------------------------------------------------- */
+// ---- 内部工具 ----
 
 /** 转义 JSON 字符串 */
 function escapeJsonString(input: string): string {
@@ -406,11 +374,10 @@ function escapeJsonString(input: string): string {
  * TOML 字符串字面量。
  *
  * TOML 的字符串转义规则与 JSON 相似但不完全相同：
- *   - 同样用双引号包裹
- *   - 需要转义 `"` 与 `\`
- *   - 反斜杠必须转义（这点与 JSON 一致）
- * 控制字符在 TOML 中的合法转义集比 JSON 小，因此这里直接移除
- * —— 实际配置里不会出现控制字符，这个处理是安全的回退。
+ *   - 同样用双引号包裹；
+ *   - 需要转义 `"` 与 `\`；
+ *   - 控制字符的合法转义集比 JSON 小，因此直接移除——
+ *     实际配置中不会出现控制字符，该处理是安全的回退。
  */
 function tomlString(input: string): string {
   const escaped = input
@@ -420,9 +387,7 @@ function tomlString(input: string): string {
   return `"${escaped}"`
 }
 
-/* ---------------------------------------------------------------------------
- * 自检工具（供阶段 5 QA 使用）
- * ------------------------------------------------------------------------- */
+// ---- 自检工具 ----
 
 /**
  * 校验生成结果中不存在未替换的占位符。

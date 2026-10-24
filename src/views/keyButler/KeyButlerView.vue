@@ -1,18 +1,11 @@
 <script setup lang="ts">
 /**
- * ============================================================================
- * Key 管家 —— 页面骨架
- * ============================================================================
+ * Key 管家页面骨架：装配布局（工具栏 + 分组列表 + 底部状态汇总条）、
+ * 建立与释放 `key-butler://*` 事件订阅，并托管四个对话框
+ * （导入 / 加密保存 / 编辑 / 历史抽屉）。
  *
- * 【职责】
- *   1. 装配布局：工具栏 + 分组列表 + 底部状态汇总条
- *   2. 建立 / 释放 3 个 `key-butler://*` 事件的订阅
- *   3. 托管四个对话框（导入 / 加密保存 / 编辑 / 历史抽屉）
- *
- * 【订阅放在这里而不是 store 里】
- * 与探测模块同一约定：`subscribe` 返回的取消函数必须在组件卸载时调用，
- * 放在组件里生命周期最清晰。store 只提供纯数据的 applyXxx。
- * ============================================================================
+ * 订阅放在组件而不是 store 里：取消函数必须在组件卸载时调用，
+ * 放在组件里生命周期最清晰；store 只提供纯数据的 applyXxx。
  */
 
 import { computed, onMounted, onUnmounted, ref } from 'vue'
@@ -35,7 +28,7 @@ const store = useKeyButlerStore()
 const message = useMessage()
 const dialog = useDialog()
 
-/* ---------------------------- 对话框状态 ---------------------------- */
+/* ---- 对话框状态 ---- */
 
 const showImport = ref(false)
 const showVault = ref(false)
@@ -45,7 +38,7 @@ const showHistory = ref(false)
 const editingEntry = ref<KeyEntry | null>(null)
 const historyEntry = ref<KeyEntry | null>(null)
 
-/* ---------------------------- 事件订阅 ---------------------------- */
+/* ---- 事件订阅 ---- */
 
 /** 取消订阅函数；由 onMounted 赋值 */
 let teardown: (() => Promise<void>) | null = null
@@ -79,7 +72,7 @@ onUnmounted(() => {
   teardown = null
 })
 
-/* ---------------------------- 交互 ---------------------------- */
+/* ---- 交互 ---- */
 
 /** 检测单条 */
 async function checkOne(entry: KeyEntry): Promise<void> {

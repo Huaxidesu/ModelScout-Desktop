@@ -1,19 +1,11 @@
 <script setup lang="ts">
 /**
- * ============================================================================
- * ModelScout —— 根组件
- * ============================================================================
+ * 根组件：装配全局主题（Naive UI 暗色 + themeOverrides）、消息/对话框 Provider，
+ * 以及整体布局骨架（顶栏 / Tab / 输入区 / 控制条 / 进度与结果 / 配置预览）。
+ * 挂载时建立事件订阅，卸载时释放。
  *
- * 【职责】
- *   1. 提供 Naive UI 的暗色主题与全局主题覆盖（themeOverrides）
- *   2. 提供消息/对话框 Provider（ElMessage 依赖它）
- *   3. 装配整体布局骨架：顶栏 + 输入区 + 控制条 + 【进度 | 结果】+ 配置预览
- *   4. 在挂载时建立事件订阅，卸载时释放
- *
- * 【布局策略】
- * 整页固定高度，内部各区域独立滚动 —— 这是桌面工具类应用的常见做法，
- * 保证长时间探测时界面不抖动、日志区不把其他区域顶出屏幕。
- * ============================================================================
+ * 布局策略：整页固定高度，各区域独立滚动，保证长时间探测时界面稳定，
+ * 日志区不会将其他区域顶出屏幕。
  */
 
 import { computed, onMounted, onUnmounted, ref } from 'vue'
@@ -38,12 +30,7 @@ import ConfigPreview from '@/components/ConfigPreview.vue'
 import KeyButlerView from '@/views/keyButler/KeyButlerView.vue'
 import { useProbe } from '@/composables/useProbe'
 
-/* ---------------------------------------------------------------------------
- * 主题覆盖
- * ---------------------------------------------------------------------------
- * 把 style.css 中的设计令牌映射到 Naive UI 的 themeOverrides，
- * 使第三方组件与自定义元素视觉完全统一（避免「拼贴感」）。
- */
+// ---- 主题覆盖：把 style.css 设计令牌映射到 Naive UI themeOverrides，统一视觉 ----
 const themeOverrides: GlobalThemeOverrides = {
   common: {
     // 品牌色：青绿
@@ -126,9 +113,7 @@ const themeOverrides: GlobalThemeOverrides = {
   },
 }
 
-/* ---------------------------------------------------------------------------
- * 页面布局状态
- * ------------------------------------------------------------------------- */
+// ---- 页面布局状态 ----
 
 /** 底部配置预览区是否展开 */
 const showConfig = ref(false)
@@ -136,16 +121,12 @@ const showConfig = ref(false)
 /** 「关于」弹窗是否显示（由 AppHeader 的入口触发） */
 const showAbout = ref(false)
 
-/* ---------------------------------------------------------------------------
- * 顶部 Tab：探测 / Key 管家（Beta）
- * ---------------------------------------------------------------------------
- * 用 `v-show` 而不是 `v-if` 切换：探测页内部有大量组件（进度面板、结果表、
- * 配置预览），`v-if` 会在每次切 Tab 时把它们整个卸载重建，
- * 既丢滚动位置也丢展开态。`v-show` 只是切换 display。
- */
+// ---- 顶部 Tab：探测 / Key 管家（Beta） ----
+// 用 v-show 而非 v-if 切换：v-if 会在每次切 Tab 时整体卸载重建探测页组件，
+// 丢失滚动位置与展开状态；v-show 仅切换 display。
 const activeTab = ref<'probe' | 'keyButler'>('probe')
 
-/** Tab 定义（beta 为 true 时在文案后挂一个 Beta 徽标） */
+/** Tab 定义（beta 为 true 时在文案后附加 Beta 徽标） */
 const TABS = [
   { value: 'probe' as const, label: '探测', beta: false },
   { value: 'keyButler' as const, label: 'Key 管家', beta: true },
@@ -173,8 +154,8 @@ onMounted(async () => {
 /**
  * Esc 退出全屏。
  *
- * 只处理全屏态 —— 内嵌态下按 Esc 不执行任何操作，
- * 否则用户查看日志时误按会直接关闭预览。
+ * 仅在全屏态生效：内嵌态下按 Esc 不执行任何操作，
+ * 避免用户查看日志时误按导致预览被关闭。
  */
 function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && configMaximized.value) {
@@ -200,7 +181,7 @@ function toggleConfigMaximize(): void {
   configMaximized.value = !configMaximized.value
 }
 
-/** 彻底关闭预览（全屏态下点「关闭」也走这里） */
+/** 彻底关闭预览（全屏态下点「关闭」同样走这里） */
 function closeConfigPreview(): void {
   configMaximized.value = false
   showConfig.value = false
@@ -209,8 +190,8 @@ function closeConfigPreview(): void {
 /**
  * 状态机状态 → 中文标签。
  *
- * 与 Rust 的 `ProbeStatus` 枚举一一对应。
- * 之所以用对象字面量而不是 switch，是因为它天然覆盖了「未知状态」的回退分支。
+ * 与 Rust 的 `ProbeStatus` 枚举一一对应；
+ * 使用对象字面量而非 switch，天然覆盖未知状态的回退分支。
  */
 const STATUS_LABELS: Record<string, string> = {
   idle: '空闲',
@@ -237,14 +218,14 @@ const statusLabel = computed(
     <NMessageProvider :max="4" placement="top-right">
       <NDialogProvider>
         <div class="flex h-screen w-screen flex-col bg-ms-bg text-ms-text">
-          <!-- ============ 顶栏 ============ -->
+          <!-- ---- 顶栏 ---- -->
           <AppHeader
             class="shrink-0"
             :status="probe.store.status"
             @open-about="showAbout = true"
           />
 
-          <!-- ============ 页面 Tab ============ -->
+          <!-- ---- 页面 Tab ---- -->
           <nav
             class="flex shrink-0 items-center gap-5 border-b border-ms-border bg-ms-panel px-4"
           >
@@ -272,23 +253,18 @@ const statusLabel = computed(
             </button>
           </nav>
 
-          <!-- ============ 主体：探测页 ============ -->
-          <!--
-            用 v-show 而不是 v-if：见脚本里 activeTab 的注释。
-            注意这里保留原有的三段式布局结构，只是把最外层从「唯一主体」
-            变成「探测 Tab 的内容」。
-          -->
+          <!-- ---- 主体：探测页（v-show 切换，原因见脚本中 activeTab 注释） ---- -->
           <div
             v-show="activeTab === 'probe'"
             class="flex min-h-0 flex-1 flex-col gap-3 px-4 py-3"
           >
-            <!-- ------ 第一段：输入区 ------ -->
+            <!-- ---- 第一段：输入区 ---- -->
             <ConnectionForm class="shrink-0" :probe="probe" />
 
-            <!-- ------ 第二段：控制条（含错误分类汇总） ------ -->
+            <!-- ---- 第二段：控制条（含错误分类汇总） ---- -->
             <ProbeControl class="shrink-0" :probe="probe" />
 
-            <!-- ------ 第三段：进度 / 结果 双栏 ------ -->
+            <!-- ---- 第三段：进度 / 结果 双栏 ---- -->
             <div class="flex min-h-0 flex-1 gap-3">
               <!-- 左：进度与日志（探测中或已跑过时显示） -->
               <ProgressPanel
@@ -335,15 +311,12 @@ const statusLabel = computed(
             </div>
           </div>
 
-          <!-- ============ 主体：Key 管家（Beta） ============ -->
-          <!--
-            同样是 v-show：Key 管家的列表、过滤条件、抽屉展开态都值得在
-            来回切 Tab 时保留。它自带底部状态汇总条，因此下面那个全局
-            状态栏只属于探测页。
-          -->
+          <!-- ---- 主体：Key 管家（Beta） ---- -->
+          <!-- v-show 切换以保留列表、过滤条件与抽屉展开状态；
+            Key 管家自带底部状态汇总条，全局状态栏仅属于探测页。 -->
           <KeyButlerView v-show="activeTab === 'keyButler'" />
 
-          <!-- ============ 状态栏（仅探测页） ============ -->
+          <!-- ---- 状态栏（仅探测页） ---- -->
           <footer
             v-show="activeTab === 'probe'"
             class="flex shrink-0 items-center justify-between border-t border-ms-border bg-ms-panel px-4 py-1.5 text-[11px] text-ms-text-faint"
@@ -367,13 +340,12 @@ const statusLabel = computed(
           </footer>
         </div>
 
-        <!-- ============ 配置预览：全屏态 ============ -->
+        <!-- ---- 配置预览：全屏态 ---- -->
         <!--
-          用 Teleport 送到 body，而不是留在原布局里：
-          原布局是 flex 嵌套，留在里面就要跟 ModelTable 抢高度，
-          还得处理各层 overflow；直接脱离布局用 fixed 覆盖最干净。
-          z-50 低于 Naive UI 的 message/modal 层级，所以复制成功的
-          提示、导出确认框依然能盖在全屏预览之上。
+          全屏态经 Teleport 挂到 body：脱离原布局的 flex 嵌套，
+          避免与 ModelTable 争抢高度及处理各层 overflow；
+          z-50 低于 Naive UI 的 message/modal 层级，
+          复制提示与导出确认框仍可覆盖在全屏预览之上。
         -->
         <Teleport to="body">
           <div
@@ -394,7 +366,7 @@ const statusLabel = computed(
           </div>
         </Teleport>
 
-        <!-- ============ 关于弹窗 ============ -->
+        <!-- ---- 关于弹窗 ---- -->
         <AboutDialog v-model:show="showAbout" />
       </NDialogProvider>
     </NMessageProvider>

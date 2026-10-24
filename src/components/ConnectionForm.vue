@@ -1,20 +1,12 @@
 <script setup lang="ts">
 /**
- * ============================================================================
- * ConnectionForm —— 输入区
- * ============================================================================
+ * 连接配置输入区：采集 Base URL、API Key、并发数、超时与上限探测开关，
+ * 提供「测试连接」预检与「获取模型列表」按钮，并支持挑选探测范围。
  *
- * 【职责】
- *   1. 采集 Base URL、API Key、并发数、超时、是否启用上限探测
- *   2. 提供「测试连接」预检按钮
- *   3. 提供「获取模型列表」按钮，并允许用户从中挑选要探测的模型
- *
- * 【安全提示】
- * API Key 支持三种来源：明文输入（type="password"，默认遮蔽，右侧常驻小眼睛可切换）、
+ * API Key 支持三种来源：明文输入（password 型遮蔽，可切换显示）、
  * 环境变量（只填变量名，由后端读取）、Windows 凭据管理器（只填凭据名，由后端读取）。
  * 无论哪种方式，Key 都只保存在前端内存（Pinia store）中，不写 localStorage、不写文件；
- * 非明文模式下明文甚至不会经过前端渲染层。
- * ============================================================================
+ * 非明文模式下明文不会经过前端渲染层。
  */
 
 import { computed, ref } from 'vue'
@@ -59,12 +51,9 @@ const pickedIds = ref<string[]>([])
 /** 当前是否禁用输入（探测中不允许改配置） */
 const disabled = computed(() => props.probe.store.isRunning)
 
-/* ---------------------------------------------------------------------------
- * 密钥来源
- * ---------------------------------------------------------------------------
- * 允许三种提供方式，均只把「明文」交给后端，前端界面在非明文模式下
- * 完全不接触密钥内容。真正的读取动作在后端 `ProbeConfig::resolve_api_key()`。
- */
+// ---- 密钥来源 ----
+// 三种提供方式均只把「明文」交给后端，非明文模式下前端界面不接触密钥内容。
+// 实际读取在后端 `ProbeConfig::resolve_api_key()` 完成。
 const KEY_SOURCE_OPTIONS = [
   { label: '明文', value: 'plain' },
   { label: '环境变量', value: 'env' },
@@ -80,12 +69,8 @@ function onKeySourceChange(value: string | number | null): void {
   props.probe.store.config.apiKeySource = value as ApiKeySource
 }
 
-/* ---------------------------------------------------------------------------
- * 常用端点预设
- * ---------------------------------------------------------------------------
- * 这些是开发中最常用的 OpenAI 兼容端点，可减少大量手动输入。
- * 用户仍可自由编辑，预设只做「一键填充」。
- */
+// ---- 常用端点预设 ----
+// 常用 OpenAI 兼容端点，用于一键填充；用户仍可自由编辑。
 const PRESETS = [
   { label: 'OpenAI', value: 'https://api.openai.com/v1' },
   { label: 'DeepSeek', value: 'https://api.deepseek.com/v1' },
@@ -104,9 +89,7 @@ function applyPreset(value: string): void {
   props.probe.store.config.baseUrl = value
 }
 
-/* ---------------------------------------------------------------------------
- * 模型挑选
- * ------------------------------------------------------------------------- */
+// ---- 模型挑选 ----
 
 /** 打开挑选弹窗，默认全不选（让用户主动挑） */
 function openPicker(): void {
@@ -134,18 +117,12 @@ const scopeLabel = computed(() => {
   return `已选 ${list.length} 个模型`
 })
 
-/* ---------------------------------------------------------------------------
- * 从文本识别连接信息
- * ---------------------------------------------------------------------------
- * 用户拿到端点和密钥的场合几乎从来不是两个干净的输入框，而是聊天记录、
- * 服务商文档、或者一份现成的配置文件。该入口负责接收整段文本，
- * 提取 Base URL 与 API Key 并填入。
- *
- * 【为什么粘贴后直接填入，而不是先让用户确认】
- * 「粘贴即用」正是这个功能的全部意义。填入的是两个可见的输入框，
- * 用户一眼能看出对不对，改起来也只是重输一次 —— 比每次多一次
- * 「确认」操作的成本低得多。因此只在**什么都没识别到时**才拦一下。
- */
+// ---- 从文本识别连接信息 ----
+// 端点与密钥通常来自聊天记录、服务商文档或现成配置文件，此处接收整段文本，
+// 提取 Base URL 与 API Key 并填入。
+//
+// 粘贴后直接填入而不先要求确认：填入目标是两个可见输入框，内容对错一目了然，
+// 重填成本低；仅在什么都没识别到时才提示。
 
 const recognizeOpen = ref(false)
 const recognizeText = ref('')
@@ -198,11 +175,11 @@ function runRecognize(notify = true): void {
  * 粘贴后自动识别。
  *
  * 用 `setTimeout(0)` 而不是立即执行：`paste` 事件触发时，粘贴的内容
- * 还没进入 `v-model`（那是随后的 `input` 事件才发生的），
- * 此刻读取 `recognizeText` 拿到的还是旧值。
+ * 还没进入 `v-model`（那要等随后的 `input` 事件），
+ * 此刻读取 `recognizeText` 拿到的是旧值。
  *
- * 刻意**不** `preventDefault` —— 让浏览器按默认行为完成粘贴，
- * 用户看到框里出现的正是自己粘的东西，所见即所得。
+ * 不 `preventDefault`：让浏览器按默认行为完成粘贴，
+ * 输入框中展示的即用户粘贴的内容。
  */
 function onRecognizePaste(): void {
   window.setTimeout(() => runRecognize(true), 0)
@@ -282,11 +259,11 @@ function clearRecognize(): void {
 
           <!--
             明文输入：
-              默认 type=password，内容以圆点（星号）遮蔽。
-              小眼睛图标用自定义 suffix 实现，**常驻显示**（不随内容有无、聚焦与否、
-              当前是否明文而变化）。此前用 Naive 的 show-password-on 存在两个问题：
-                1. 明文态下 type 变为 text，Naive 自带的图标会消失，无法「常驻」；
-                2. 把 @click 挂在 NInput 上会导致「点输入框任意位置都切换明文」。
+              默认 type=password，内容以圆点遮蔽。
+              小眼睛图标用自定义 suffix 实现，常驻显示（不随内容有无、聚焦与否、
+              当前是否明文而变化）。不使用 Naive 的 show-password-on，原因：
+                1. 明文态下 type 变为 text，Naive 自带图标会消失，无法常驻；
+                2. 把 @click 挂在 NInput 上会导致点输入框任意位置都切换明文。
               自定义 suffix 只把切换绑定在按钮本身，行为可控。
           -->
           <NInput
@@ -495,7 +472,7 @@ function clearRecognize(): void {
       </div>
     </div>
 
-    <!-- ============ 从文本识别 ============ -->
+    <!-- ---- 从文本识别 ---- -->
     <NModal v-model:show="recognizeOpen" preset="card" style="width: 700px">
       <NCard :bordered="false" title="从文本识别连接信息" size="small">
         <div class="mb-2 text-[11px] leading-relaxed text-ms-text-dim">
@@ -575,7 +552,7 @@ function clearRecognize(): void {
       </NCard>
     </NModal>
 
-    <!-- ============ 模型挑选弹窗 ============ -->
+    <!-- ---- 模型挑选弹窗 ---- -->
     <NModal v-model:show="pickerOpen" preset="card" style="width: 640px">
       <NCard
         :bordered="false"

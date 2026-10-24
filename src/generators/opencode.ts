@@ -1,12 +1,7 @@
 /**
- * ============================================================================
- * ModelScout —— OpenCode 配置生成器
- * ============================================================================
+ * OpenCode 配置生成器。
  *
- * 【格式依据】
- * 本生成器输出的字段以 OpenCode 官方 JSON Schema 为准：
- *   https://opencode.ai/config.json
- *
+ * 格式依据：OpenCode 官方 JSON Schema（https://opencode.ai/config.json）。
  * 关键结构（已按 schema 逐字段核对）：
  *
  *   provider.<key> = {
@@ -19,29 +14,21 @@
  *   ModelEntry = {
  *     id?:          string
  *     name?:        string
- *     tool_call?:   boolean         // 注意：顶层字段，不是 capabilities.toolcall
- *     attachment?:  boolean         // 注意：顶层字段
- *     reasoning?:   boolean         // 注意：顶层字段
+ *     tool_call?:   boolean         // 顶层字段，不是 capabilities.toolcall
+ *     attachment?:  boolean         // 顶层字段
+ *     reasoning?:   boolean         // 顶层字段
  *     limit?:       { context: number, output: number }   // 二者都必填
  *   }
  *
- * 注意：**两个曾遇到的问题（本文件已修正）**
+ * 两个 schema 约束（本文件据此实现）：
+ * 1. 模型条目 `additionalProperties: false`，嵌套的
+ *    `capabilities: { toolcall, ... }` 是非法键，会使整份配置校验失败；
+ *    能力开关必须以 `tool_call` / `attachment` / `reasoning` 平铺在条目上。
+ * 2. `limit` 对象同样 `additionalProperties: false`，且 `context` / `output`
+ *    均为必填，不能只写其中一个。
  *
- * 1. 模型能力开关曾经被写成嵌套的 `capabilities: { toolcall, attachment,
- *    reasoning }`。但官方 schema 对模型条目设了 `additionalProperties: false`，
- *    即**不允许任何未声明的字段** —— `capabilities` 是非法键，会让整份配置
- *    校验失败。正确写法是把 `tool_call` / `attachment` / `reasoning`
- *    平铺在模型条目上。
- *
- * 2. `limit` 对象同样 `additionalProperties: false` 且 `context` / `output`
- *    都是必填 —— 所以不能只写其中一个。
- *
- * 【安全说明】
- * `options.apiKey` 支持两种写法：
- *   - 明文（默认）：复制即可用
- *   - `{env:VAR}`  ：opencode 原生支持的变量引用，密钥留在环境变量里
- * 由 `GenerateContext.apiKeyMode` 控制，界面可切换。
- * ============================================================================
+ * 安全说明：`options.apiKey` 支持明文（默认）或 `{env:VAR}` 引用
+ * （密钥留在环境变量里），由 `GenerateContext.apiKeyMode` 控制。
  */
 
 import type { ModelInfo } from '@/types/contracts'
@@ -53,9 +40,7 @@ import {
   resolveApiKeyField,
 } from './naming'
 
-/* ---------------------------------------------------------------------------
- * 类型定义
- * ------------------------------------------------------------------------- */
+// ---- 类型定义 ----
 
 /**
  * OpenCode 配置文件中的单个 provider 条目。
@@ -80,8 +65,8 @@ export interface OpenCodeProvider {
 /**
  * OpenCode 中的单个模型条目。
  *
- * 注意：能力开关是**顶层字段**（`tool_call` / `attachment` / `reasoning`），
- * 不是嵌套对象 —— 详见文件头注释。
+ * 能力开关是顶层字段（`tool_call` / `attachment` / `reasoning`），
+ * 不是嵌套对象，原因见文件头注释。
  */
 export interface OpenCodeModelEntry {
   /** 模型 ID（与它在 `models` 里的 key 相同，显式写出来便于阅读） */
@@ -109,9 +94,7 @@ export interface OpenCodeConfig {
   provider: Record<string, OpenCodeProvider>
 }
 
-/* ---------------------------------------------------------------------------
- * 生成参数
- * ------------------------------------------------------------------------- */
+// ---- 生成参数 ----
 
 export interface GenerateContext {
   /** Base URL（用户填写的原始值） */
@@ -145,9 +128,8 @@ export interface ResolvedContext {
 /**
  * 把 `GenerateContext` 补齐成确定值。
  *
- * 抽出来是为了让「对象构建」与「JSONC 文本渲染」两条路径**共用同一套
- * 默认值推断**。此前两处各写一遍 `?? 'modelscout'`，一旦要改默认值
- * 就得改两个地方 —— 而且极易漏。
+ * 单独抽出是为了让「对象构建」与「JSONC 文本渲染」两条路径
+ * 共用同一套默认值推断，避免两处各写一遍默认值逻辑导致不一致。
  */
 export function resolveContext(context: GenerateContext): ResolvedContext {
   const providerKey = (context.providerKey ?? '').trim() || inferProviderKey(context.baseUrl)
@@ -168,9 +150,7 @@ export function resolveContext(context: GenerateContext): ResolvedContext {
   }
 }
 
-/* ---------------------------------------------------------------------------
- * 辅助函数
- * ------------------------------------------------------------------------- */
+// ---- 辅助函数 ----
 
 /**
  * 从 Base URL 推测 provider 所使用的 SDK 包名。
@@ -227,7 +207,7 @@ export function buildModelEntry(model: ModelInfo): OpenCodeModelEntry {
   }
 
   // 只有在上限已知时才写入 limit，避免写入凭空的数字。
-  // 注意 schema 要求 context 与 output **同时存在**，所以要么都写、要么都不写。
+  // schema 要求 context 与 output 同时存在，因此要么都写、要么都不写。
   if (model.contextLimit > 0 || model.maxOutputLimit > 0) {
     entry.limit = {
       context: model.contextLimit > 0 ? model.contextLimit : DEFAULT_CONTEXT,
@@ -243,16 +223,13 @@ const DEFAULT_CONTEXT = 8192
 /** 未能探测到输出上限时使用的回退值（4K，几乎无风险） */
 const DEFAULT_OUTPUT = 4096
 
-/* ---------------------------------------------------------------------------
- * 主生成函数
- * ------------------------------------------------------------------------- */
+// ---- 主生成函数 ----
 
 /**
  * 构造 OpenCode 配置对象。
  *
- * 返回的是**对象**而非字符串，好处是：
- *   - 可以用官方 schema 结构化校验（见 opencode.spec.ts）
- *   - 未来若要改成写文件，直接 JSON.stringify 即可
+ * 返回对象而非字符串：可用官方 schema 做结构化校验（见 opencode.spec.ts）；
+ * 后续若需写文件，直接 JSON.stringify 即可。
  */
 export function buildOpenCodeConfig(context: GenerateContext): OpenCodeConfig {
   const ctx = resolveContext(context)
@@ -263,8 +240,8 @@ export function buildOpenCodeConfig(context: GenerateContext): OpenCodeConfig {
   }
 
   const options: OpenCodeProvider['options'] = { baseURL: ctx.baseUrl }
-  // 密钥为空时**不写这个字段** —— 写一个空字符串会让 opencode 报鉴权失败，
-  // 而完全不写则允许它回退到环境变量或其它来源。
+  // 密钥为空时不写该字段：写空字符串会让 opencode 报鉴权失败，
+  // 不写则允许它回退到环境变量等其它鉴权来源。
   if (ctx.apiKeyField) {
     options.apiKey = ctx.apiKeyField
   }
@@ -285,12 +262,10 @@ export function buildOpenCodeConfig(context: GenerateContext): OpenCodeConfig {
 }
 
 /**
- * 渲染 provider 对象的**内部键值**（不含外层的 `"provider": {` / `}`）。
+ * 渲染 provider 对象的内部键值（不含外层的 `"provider": {` / `}`）。
  *
- * 抽出来的原因：完整配置与片段两种形态只有「缩进基准」和「首尾包装」
- * 不同，中间这一大块完全一样。此前只有完整配置一个调用方，所以直接
- * 内联在 `renderOpenCodeJsonc` 里；加了片段形态之后必须共享，
- * 否则两处各写一遍，迟早会改一处漏一处。
+ * 单独抽出：完整配置与片段两种形态只有缩进基准和首尾包装不同，
+ * 中间部分完全一致，共享避免两处实现漂移。
  *
  * @param keyIndent provider 键名那一行左侧的空格数
  */
@@ -328,22 +303,17 @@ function providerBodyLines(ctx: ResolvedContext, keyIndent: number): string[] {
 }
 
 /**
- * 把配置渲染为带注释的 JSONC 文本（**完整配置**）。
+ * 把配置渲染为带注释的 JSONC 文本（完整配置）。
  *
- * 【为什么手动拼字符串而不是 JSON.stringify】
- * 用户需要看懂生成的配置。纯 JSON.stringify 会得到一行 200 字符的
- * 压缩产物，或是一个缩进到无法阅读的巨块。手动拼接让我们可以：
- *   - 在文件头写清「这份文件是什么、密钥写在哪、要注意什么」
- *   - 按「provider → 模型」分组，加空行分隔
+ * 手动拼字符串而非 JSON.stringify 的原因：用户需要读懂生成的配置。
+ * JSON.stringify 只能输出压缩产物或难以阅读的巨块；手动拼接可以
+ * 在文件头写明用途、密钥位置与注意事项，并按 provider → 模型分组加空行。
  *
- * 【为什么模型区不加逐条注释】
- * 早期版本给**每个模型**都写了「工具调用=支持 · 附件=未知 · 推理=否」
- * 两行注释。模型一多，注释量就超过配置本身，反而把真正的字段淹没了。
- * 探测依据在界面的结果表格里看更清楚，配置文件保持干净。
+ * 模型区不加逐条注释：模型一多，注释量会超过配置本身；
+ * 探测依据在界面的结果表格里查看更清楚，配置文件保持干净。
  *
- * 【为什么是 JSONC 而非严格 JSON】
- * 官方示例普遍使用带注释的 JSONC。若你的工具链要求严格 JSON，
- * 请使用 `renderOpenCodeJson()`（无注释版本）。
+ * 输出 JSONC 而非严格 JSON：官方示例普遍使用带注释的 JSONC；
+ * 需要严格 JSON 时使用 `renderOpenCodeJson()`。
  */
 export function renderOpenCodeJsonc(context: GenerateContext): string {
   const ctx = resolveContext(context)
@@ -376,20 +346,16 @@ export function renderOpenCodeJsonc(context: GenerateContext): string {
 }
 
 /**
- * 渲染为**可粘贴的片段**：只有 `"provider": { ... }` 这一段，没有根大括号。
+ * 渲染为可粘贴的片段：只有 `"provider": { ... }` 一段，没有根大括号。
  *
- * 【为什么需要】
- * 实际使用中，用户几乎总是**已经有一份 opencode.json**（里面有 mcp /
- * permission / plugin 等），需要的是把 provider 加进去，而不是替换整份文件。
- * 而完整配置自带 `{` … `}` 与 `$schema`，直接粘进去必然多出一层括号 ——
- * 这正是用户实际遇到的问题：合并时多留了一个 `}`，opencode 直接解析失败。
+ * 用户通常已有一份 opencode.json（含 mcp / permission / plugin 等），
+ * 需要的是把 provider 合并进去而不是替换整份文件；完整配置自带
+ * `{` … `}` 与 `$schema`，直接粘贴会多出一层括号导致解析失败。
+ * 片段形态消除这类错误：粘到哪一层就是哪一层。
  *
- * 片段形态从根上消除这类错误：粘到哪一层就是哪一层。
- *
- * 【末尾逗号的处理】
- * 片段**不带**尾逗号 —— 因为如果它恰好是最后一项，尾逗号反而会变成语法错误。
- * 但逗号是「贴上去之后」才需要判断的事，所以把提示放在片段**末尾**，
- * 也就是用户真正需要做决定的那个位置。
+ * 末尾逗号的处理：片段不带尾逗号——若它恰为最后一项，尾逗号是语法错误；
+ * 是否补逗号取决于粘贴位置，因此把提示放在片段末尾，
+ * 即用户实际需要判断的位置。
  */
 export function renderOpenCodeProviderFragment(context: GenerateContext): string {
   const ctx = resolveContext(context)
@@ -419,7 +385,7 @@ export function renderOpenCodeProviderFragment(context: GenerateContext): string
 }
 
 /**
- * 把配置渲染为**严格 JSON**（无注释）。
+ * 把配置渲染为严格 JSON（无注释）。
  *
  * 用于需要 JSON.parse 的场景（CI、脚本、工具链校验）。
  */
@@ -427,9 +393,7 @@ export function renderOpenCodeJson(context: GenerateContext): string {
   return JSON.stringify(buildOpenCodeConfig(context), null, 2)
 }
 
-/* ---------------------------------------------------------------------------
- * 内部工具
- * ------------------------------------------------------------------------- */
+// ---- 内部工具 ----
 
 /**
  * 转义 JSON 字符串中的特殊字符。
@@ -467,15 +431,13 @@ function stringifyEntry(value: unknown, indentSpaces: number): string {
     .join('\n')
 }
 
-/* ---------------------------------------------------------------------------
- * 自检工具（供阶段 5 QA 使用）
- * ------------------------------------------------------------------------- */
+// ---- 自检工具 ----
 
 /**
  * 校验生成结果中不存在未替换的占位符。
  *
- * 任务书阶段 4 验收项：「模板中的占位符全部被正确替换，无残留 {{}}」。
- * 本函数即将该验收项落实为可执行检查。
+ * 验收要求：模板中的占位符全部被正确替换，无 `{{}}` 残留；
+ * 该函数把该要求落实为可执行检查。
  */
 export function validateNoPlaceholders(output: string): string[] {
   const problems: string[] = []

@@ -1,25 +1,18 @@
 <script setup lang="ts">
 /**
- * ============================================================================
- * ConfigPreview —— 配置预览与一键复制
- * ============================================================================
+ * 配置预览与一键复制。
  *
- * 【职责】
- *   1. 双 Tab 切换：OpenCode / DeepSeekHardness
- *   2. 每个 Tab 内可切换输出形态（JSONC / 严格 JSON / TOML）
- *   3. 只读代码预览 + 行号 + 一键复制
- *   4. 导出为文件（写入应用数据目录的 exports/ 子目录）
+ * - 双 Tab 切换 OpenCode / DeepSeekHardness，每个 Tab 内可切换输出形态
+ *   （JSONC / 严格 JSON / TOML）；
+ * - 只读代码预览 + 行号 + 一键复制；
+ * - 导出为文件（写入应用数据目录的 exports/ 子目录）。
  *
- * 【剪贴板策略（决策日志 D-05）】
- * Tauri 任务书第七节第 5 条要求：不确定 navigator.clipboard 在 WebView
- * 中是否可用时，改用 tauri-plugin-clipboard-manager。
- *
- * 本项目采用**三级降级**策略，最大化兼容性：
- *   1. 优先尝试 tauri-plugin-clipboard-manager（原生，最可靠）
- *   2. 失败则回退 navigator.clipboard（需 HTTPS 或 localhost 上下文）
- *   3. 再失败则回退 document.execCommand('copy')（最古老但最广）
- * 三级都失败时，提示用户手动全选复制，并自动帮用户选中代码区。
- * ============================================================================
+ * 剪贴板策略：navigator.clipboard 在 WebView 中不一定可用，
+ * 采用三级降级以最大化兼容性：
+ *   1. tauri-plugin-clipboard-manager（原生，最可靠）；
+ *   2. navigator.clipboard（需 HTTPS 或 localhost 上下文）；
+ *   3. document.execCommand('copy')（已废弃但兼容性最广）。
+ * 三级都失败时提示用户手动全选复制，并自动选中代码区。
  */
 
 import { computed, ref, watch } from 'vue'
@@ -90,15 +83,10 @@ const copied = ref<'opencode' | 'hardness' | null>(null)
 const opencodeRef = ref<HTMLElement | null>(null)
 const hardnessRef = ref<HTMLElement | null>(null)
 
-/* ---------------------------------------------------------------------------
- * 命名与密钥（生成时的可选项）
- * ---------------------------------------------------------------------------
- *
- * 【设计：推断值当默认，用户输入当覆盖】
- * `xxxOverride === null` 表示「跟随推断」，一旦用户动过输入框就固定下来。
- * 这样 Base URL 一改，键名会自动跟着变（用户没手动改过的话），
- * 而用户改过之后自动推断不会再覆盖其输入。
- */
+// ---- 命名与密钥（生成时的可选项） ----
+// 推断值作默认、用户输入作覆盖：`xxxOverride === null` 表示「跟随推断」，
+// 用户修改过输入框后固定为其输入。Base URL 变化时键名自动跟随
+// （用户未手动改过的情况下），用户改过之后自动推断不再覆盖其输入。
 
 /** provider 键名的人工覆盖值；null = 跟随 Base URL 推断 */
 const providerKeyOverride = ref<string | null>(null)
@@ -113,7 +101,7 @@ const apiKeyMode = ref<ApiKeyMode>('plain')
 const baseUrl = computed(() => props.probe.store.config.baseUrl)
 const apiKey = computed(() => props.probe.store.config.apiKey ?? '')
 
-/** provider 键名输入框的原始值（**不做实时规整**，否则用户打不出 `my-key`） */
+/** provider 键名输入框的原始值（不做实时规整，否则无法输入 `my-key` 这类中间态） */
 const providerKeyInput = computed<string>({
   get: () => providerKeyOverride.value ?? inferProviderKey(baseUrl.value),
   set: (value: string) => {
@@ -122,11 +110,11 @@ const providerKeyInput = computed<string>({
 })
 
 /**
- * 真正写进配置的键名 —— 已规整成合法形态。
+ * 真正写进配置的键名，已规整成合法形态。
  *
- * 规整放在**这里**而不是输入框的 setter：用户打字过程中
- * `my-` 这种中间态必须被原样保留，否则连字符会被规整掉，无法输入
- * `my-key`。规整只在生成时发生，用户看到的是自己输入的内容。
+ * 规整放在此处而不是输入框的 setter：用户打字过程中 `my-` 这类
+ * 中间态必须被原样保留，否则连字符会被规整掉。规整只在生成时发生，
+ * 输入框展示用户输入的原始内容。
  */
 const providerKey = computed<string>(
   () => sanitizeProviderKey(providerKeyInput.value) || inferProviderKey(baseUrl.value),
@@ -149,10 +137,10 @@ const envVarName = computed<string>({
 })
 
 /**
- * 键名变化时，让「还是自动推断状态」的从属字段跟着更新。
+ * 键名变化时，让仍处于自动推断状态的从属字段跟着更新。
  *
  * 判断依据：某个从属字段的覆盖值恰好等于「用旧键名推断出来的值」，
- * 说明它本来就是自动填的，不是用户特意写的 → 重新推断。
+ * 说明它由自动填充产生而非用户手动输入，因此重新推断。
  */
 watch(providerKey, (next, prev) => {
   if (next === prev) return
@@ -217,9 +205,7 @@ watch(
   { immediate: true },
 )
 
-/* ---------------------------------------------------------------------------
- * 生成上下文
- * ------------------------------------------------------------------------- */
+// ---- 生成上下文 ----
 
 /** 生成器共用的上下文 */
 const context = computed(() => ({
@@ -232,9 +218,7 @@ const context = computed(() => ({
   apiKeyEnv: envVarName.value,
 }))
 
-/* ---------------------------------------------------------------------------
- * 生成结果
- * ------------------------------------------------------------------------- */
+// ---- 生成结果 ----
 
 /** OpenCode 配置文本 */
 const opencodeText = computed(() => {
@@ -303,9 +287,7 @@ const activeRef = computed(() =>
   activeTab.value === 'opencode' ? opencodeRef.value : hardnessRef.value,
 )
 
-/* ---------------------------------------------------------------------------
- * 统计信息
- * ------------------------------------------------------------------------- */
+// ---- 统计信息 ----
 
 /** 每个生成器的统计（模型数、字符数、行数） */
 const stats = computed(() => {
@@ -327,9 +309,7 @@ const unknownLimitCount = computed(
     ).length,
 )
 
-/* ---------------------------------------------------------------------------
- * 复制（三级降级）
- * ------------------------------------------------------------------------- */
+// ---- 复制（三级降级） ----
 
 /**
  * 执行复制，返回是否成功。
@@ -410,16 +390,14 @@ function selectActiveCode(): void {
   selection.addRange(range)
 }
 
-/* ---------------------------------------------------------------------------
- * 导出为文件
- * ------------------------------------------------------------------------- */
+// ---- 导出为文件 ----
 
 const exporting = ref(false)
 
 /** 把当前配置写入磁盘 */
 async function exportActive(): Promise<void> {
-  // 明文密钥落盘前必须让用户知情 —— 复制到剪贴板是「用过就散」，
-  // 而写成文件会长期留在磁盘上，风险等级不同。
+  // 明文密钥落盘前必须让用户知情：复制到剪贴板是一次性使用，
+  // 而导出为文件会长期留在磁盘上，风险等级不同。
   if (apiKeyMode.value === 'plain' && keyFilled.value) {
     const confirmed = await new Promise<boolean>((resolve) => {
       dialog.warning({
@@ -454,17 +432,14 @@ async function exportActive(): Promise<void> {
   }
 }
 
-/* ---------------------------------------------------------------------------
- * 行号渲染
- * ------------------------------------------------------------------------- */
+// ---- 行号渲染 ----
 
 /**
  * 把文本拆成带行号的行数组。
  *
- * 【为什么前端算行号而不是用第三方编辑器组件】
- * 此处的需求是「只读预览 + 复制」，引入 CodeMirror/Monaco 会显著
- * 增大打包体积（Monaco 约 2MB+）。手写行号 + `<pre>` 只需几十行，
- * 且渲染性能对几百行的配置文件完全够用。
+ * 不使用 CodeMirror/Monaco 等编辑器组件：此处需求是「只读预览 + 复制」，
+ * 引入完整编辑器会显著增大打包体积；手写行号 + `<pre>` 只需几十行，
+ * 渲染性能对几百行的配置文件足够。
  */
 function numberedLines(text: string): Array<{ no: number; content: string }> {
   return text.split('\n').map((content, index) => ({
@@ -514,15 +489,13 @@ function highlight(line: string): string {
   return escaped
 }
 
-/* ---------------------------------------------------------------------------
- * 预览内容变化提示
- * ------------------------------------------------------------------------- */
+// ---- 预览内容变化提示 ----
 
 /**
- * 当选中的模型集合变化时，如果预览区已打开，给一个轻提示。
+ * 选中的模型集合变化且预览区已打开时，给出轻提示。
  *
- * 这解决一个实际困扰：用户在表格里改了勾选，
- * 但没意识到预览区内容**已经自动跟着变了**（属预期行为，但需提示用户）。
+ * 预览内容会随勾选自动更新（预期行为），但用户可能未察觉，
+ * 因此显式提示当前模型数量。
  */
 watch(
   () => props.probe.store.selectedIds.length,
@@ -706,7 +679,7 @@ watch(
       pane-class="min-h-0"
       style="--n-tab-padding: 0 12px"
     >
-      <!-- ========== OpenCode ========== -->
+      <!-- ---- OpenCode ---- -->
       <NTabPane name="opencode" tab="OpenCode" class="min-h-0">
         <div class="flex h-full flex-col">
           <div class="shrink-0 border-b border-ms-border px-3 py-1 text-[10px] text-ms-text-faint">
@@ -728,7 +701,7 @@ watch(
         </div>
       </NTabPane>
 
-      <!-- ========== DeepSeekHardness ========== -->
+      <!-- ---- DeepSeekHardness ---- -->
       <NTabPane name="hardness" tab="DeepSeekHardness" class="min-h-0">
         <div class="flex h-full flex-col">
           <div class="shrink-0 border-b border-ms-border px-3 py-1 text-[10px] text-ms-text-faint">

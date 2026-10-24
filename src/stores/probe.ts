@@ -1,20 +1,15 @@
 /**
- * ============================================================================
- * ModelScout —— 全局状态管理（Pinia）
- * ============================================================================
+ * 全局状态管理（Pinia store）。
  *
- * 【职责】
- * 集中存放探测相关的全部可变状态，让组件只关心渲染：
- *   - 连接配置（含 API Key，**只在前端内存中存续，不落盘**）
- *   - 运行状态机（idle / running / cancelling / done / cancelled / failed）
- *   - 进度与日志缓冲
- *   - 探测结果模型列表与勾选状态
- *   - 错误分类汇总
+ * 集中存放探测相关的全部可变状态，组件只负责渲染：
+ *   - 连接配置（API Key 只在前端内存中存续，不落盘）；
+ *   - 运行状态机（idle / running / cancelling / done / cancelled / failed）；
+ *   - 进度与日志缓冲；
+ *   - 探测结果模型列表与勾选状态；
+ *   - 错误分类汇总。
  *
- * 【为什么用 Pinia 而不是简单的 reactive 单例】
- *   - 阶段 4 的配置生成器需要读探测结果，组件层级较深
- *   - 便于在阶段 5 做单元验证（store 可以脱离组件测试）
- * ============================================================================
+ * 使用 Pinia 而非简单 reactive 单例：配置生成器需要跨层级读取探测结果，
+ * 且 store 可脱离组件做单元测试。
  */
 
 import { defineStore } from 'pinia'
@@ -34,9 +29,7 @@ import type {
   ProbeStatus,
 } from '@/types/contracts'
 
-/* ---------------------------------------------------------------------------
- * 常量
- * ------------------------------------------------------------------------- */
+// ---- 常量 ----
 
 /** 单条日志缓冲上限，防止长时间运行导致内存无限增长 */
 const MAX_LOG_LINES = 600
@@ -46,20 +39,18 @@ export function defaultConfig(): ProbeConfig {
   return {
     baseUrl: 'https://api.openai.com/v1',
     apiKey: '',
-    concurrency: 3, // 任务书第五节要求：默认并发 3
-    timeoutSecs: 30, // 任务书第五节要求：30s 超时
+    concurrency: 3, // 默认并发 3：兼顾探测速度与上游限流
+    timeoutSecs: 30, // 默认 30 秒超时
     probeLimits: true,
     onlyModels: [],
-    // 密钥默认走明文输入（与引入「环境变量 / 凭据管理器」来源之前行为一致）
+    // 密钥默认走明文输入（与引入环境变量 / 凭据管理器来源之前的行为一致）
     apiKeySource: 'plain',
     apiKeyEnvVar: '',
     apiKeyCredential: '',
   }
 }
 
-/* ---------------------------------------------------------------------------
- * Store 定义
- * ------------------------------------------------------------------------- */
+// ---- Store 定义 ----
 
 export const useProbeStore = defineStore('probe', () => {
   /* ---------------------------- 配置 ---------------------------- */
@@ -67,12 +58,12 @@ export const useProbeStore = defineStore('probe', () => {
   /**
    * 探测配置。
    *
-   * 注意：安全说明 —— `apiKey` 只存在于渲染进程内存中，不写 localStorage、
-   * 不写文件。窗口关闭即丢失，这是刻意的设计（决策日志 D-09）。
+   * 安全说明：`apiKey` 只存在于渲染进程内存中，不写 localStorage、
+   * 不写文件，窗口关闭即丢失。
    */
   const config = reactive<ProbeConfig>(defaultConfig())
 
-  /* ---------------------------- 运行状态 ---------------------------- */
+  /* ---- 运行状态 ---- */
 
   /** 当前状态机状态 */
   const status = ref<ProbeStatus>('idle')
@@ -81,7 +72,7 @@ export const useProbeStore = defineStore('probe', () => {
   /** 是否已启动过至少一轮探测（用于决定是否显示结果区） */
   const hasRun = ref(false)
 
-  /* ---------------------------- 进度 ---------------------------- */
+  /* ---- 进度 ---- */
 
   /** 总模型数 */
   const total = ref(0)
@@ -92,14 +83,14 @@ export const useProbeStore = defineStore('probe', () => {
   /** 每个模型当前所处阶段，key 是模型 ID */
   const stageByModel = reactive<Record<string, ProbeStage>>({})
 
-  /* ---------------------------- 结果 ---------------------------- */
+  /* ---- 结果 ---- */
 
   /** 探测完成的模型列表（表驱动 UI 的数据源） */
   const models = ref<ModelInfo[]>([])
   /** 被用户勾选的模型 ID 集合 */
   const selectedIds = ref<string[]>([])
 
-  /* ---------------------------- 日志与错误 ---------------------------- */
+  /* ---- 日志与错误 ---- */
 
   /** 日志缓冲（最新的在最后） */
   const logs = ref<ProbeLog[]>([])
@@ -109,7 +100,7 @@ export const useProbeStore = defineStore('probe', () => {
   const startedAt = ref(0)
   const finishedAt = ref(0)
 
-  /* ---------------------------- 计算属性 ---------------------------- */
+  /* ---- 计算属性 ---- */
 
   /** 是否正在运行（含正在收敛的中止状态） */
   const isRunning = computed(
@@ -167,7 +158,7 @@ export const useProbeStore = defineStore('probe', () => {
     return { tools, vision, reasoning, total: models.value.length }
   })
 
-  /* ---------------------------- 动作 ---------------------------- */
+  /* ---- 动作 ---- */
 
   /** 重置为一次全新的运行。保留配置，清空所有结果。 */
   function resetRun(): void {
@@ -275,20 +266,19 @@ export const useProbeStore = defineStore('probe', () => {
   /**
    * 用一次完整运行的结果覆盖 store。
    *
-   * 这是**事件丢失时的回退路径**：`startProbe` 的返回值里带着完整结果，
-   * 即使用户在探测过程中关闭又打开了 DevTools 导致事件丢失，
-   * 最终也能拿到正确数据。
+   * 事件丢失时的回退路径：`startProbe` 的返回值携带完整结果，
+   * 即使探测过程中事件全部丢失，最终也能拿到正确数据。
    */
   function applySummary(summary: ProbeRunSummary): void {
     runId.value = summary.runId || runId.value
     status.value = summary.status
 
-    // 防御：后端返回**空数组**、而事件路径已经累积出结果时，不要用空数组覆盖。
+    // 防御：后端返回空数组、而事件路径已经累积出结果时，不要用空数组覆盖。
     //
-    // 为什么需要：曾经出现过后端漏收集结果、返回 `models: []` + `status: 'failed'`
-    // 的缺陷（见 D-37），而 `probe://model-done` 事件是正确的 ——
-    // 此时盲目覆盖会把好不容易拿到的数据清空，界面显示「0/0 暂无探测结果」。
-    // 反之若事件丢了、后端有数据，这个分支同样会用后端的正确值覆盖。
+    // 原因：后端可能漏收集结果、返回 `models: []` + `status: 'failed'`，
+    // 而 `probe://model-done` 事件是正确的——此时盲目覆盖会把已拿到的数据
+    // 清空，界面显示「0/0 暂无探测结果」。反之若事件丢失、后端有数据，
+    // 该分支同样会用后端的正确值覆盖。
     if (summary.models.length > 0 || models.value.length === 0) {
       models.value = summary.models
       total.value = summary.models.length
@@ -316,12 +306,9 @@ export const useProbeStore = defineStore('probe', () => {
   /**
    * 丢弃指向「已不存在模型」的勾选 id。
    *
-   * 为什么需要：`selectedIds` 是独立于 `models` 的数组。若只往里加、从不清理，
-   * 就会累积**幽灵 id**。而界面上「生成配置（N）」「已选 N / M」用的都是
-   * `selectedIds.length` —— 于是显示的数字会比实际可生成的模型还多。
-   *
-   * 这正是 D-37 截图里那个自相矛盾细节的来源：结果表显示「0/0 暂无探测结果」，
-   * 按钮却写着「生成配置 (10)」。
+   * `selectedIds` 独立于 `models`，只增不清会累积幽灵 id；
+   * 界面上「生成配置（N）」「已选 N / M」读取的是 `selectedIds.length`，
+   * 数字会比实际可生成的模型还多。
    */
   function pruneSelection(): void {
     const alive = new Set(models.value.map((m) => m.id))
@@ -350,7 +337,7 @@ export const useProbeStore = defineStore('probe', () => {
     finishedAt.value = Date.now()
   }
 
-  /* ---------------------------- 勾选管理 ---------------------------- */
+  /* ---- 勾选管理 ---- */
 
   /** 切换单个模型的勾选状态。 */
   function toggleModel(id: string): void {
@@ -380,8 +367,6 @@ export const useProbeStore = defineStore('probe', () => {
 
   /**
    * 按条件批量选择：只选支持工具调用的 / 只选推理模型 / 只选支持视觉的。
-   *
-   * 这是很实用的筛选器 —— 例如接 OpenCode 时通常只想要支持工具调用的模型。
    */
   function selectByPredicate(predicate: (model: ModelInfo) => boolean): void {
     selectedIds.value = models.value.filter(predicate).map((m) => m.id)
@@ -390,10 +375,8 @@ export const useProbeStore = defineStore('probe', () => {
   /**
    * 手动纠正某个模型的字段。
    *
-   * 【为什么需要】
-   * 上限探测依赖服务端在报错里回显数值，实测中总有服务商不给。
-   * 与其让用户去改 JSON，不如在表格里允许直接编辑 ——
-   * 这是「诚实标注 + 可修正」的落地（决策日志 D-10）。
+   * 上限探测依赖服务端在报错里回显数值，部分服务商不回显；
+   * 表格内直接编辑配合「手动」来源标注，避免用户手改 JSON。
    */
   function patchModel(id: string, patch: Partial<ModelInfo>): void {
     const index = models.value.findIndex((m) => m.id === id)

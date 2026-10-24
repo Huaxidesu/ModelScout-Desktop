@@ -1,23 +1,14 @@
-/**
- * ============================================================================
- * ModelScout —— 库入口（Tauri v2 应用装配）
- * ============================================================================
- *
- * 【职责】
- *   1. 声明全部模块
- *   2. 构造并运行 Tauri Builder
- *   3. 注册插件（剪贴板、打开外部链接）
- *   4. 托管全局状态（AppState）
- *   5. 在 setup 阶段初始化模型参数字典
- *   6. 注册全部 6 个命令（generate_handler!）
- *
- * 【Tauri v2 结构约定】
- * 官方推荐把全部逻辑放进 lib crate（`modelscout_lib`），
- * `main.rs` 只做一行调用。这样做的好处：
- *   - 移动端目标（Android/iOS）可以复用同一个 lib
- *   - 单元测试可以直接针对 lib 运行，无需启动完整应用
- * ============================================================================
- */
+//! ModelScout 库入口：Tauri v2 应用装配。
+//!
+//! - 声明全部业务模块，构造并运行 Tauri Builder；
+//! - 注册插件（剪贴板、打开外部链接），托管全局状态
+//!   （探测的 `AppState` 与 Key 管家的 `KeyButlerState`）；
+//! - setup 阶段初始化模型参数字典、Key 管家前缀表与落盘路径；
+//! - 注册全部命令（探测 7 个 + Key 管家 15 个）。
+//!
+//! 按 Tauri v2 结构约定，全部逻辑置于 lib crate（`modelscout_lib`），
+//! `main.rs` 仅做一行调用：移动端目标可复用同一 lib，单元测试可直接
+//! 针对 lib 运行，无需启动完整应用。
 
 // 全部业务模块
 pub mod commands; // Tauri 命令层
@@ -30,8 +21,8 @@ pub mod max_tokens; // 超大 max_tokens 报错解析
 pub mod models; // 数据契约（serde camelCase）
 pub mod probe; // 探测引擎
 
-// 启动前检查 WebView2 运行时。只在 Windows 上有意义 ——
-// macOS / Linux 用的是系统自带的 WebKit，没有这个组件。
+// 启动前检查 WebView2 运行时。仅在 Windows 上有意义：
+// macOS / Linux 使用系统自带的 WebKit，没有这个组件。
 #[cfg(windows)]
 pub mod webview2;
 
@@ -43,16 +34,15 @@ use commands::AppState;
 //    漏掉这一行会报 "no method named `path` found for `&mut tauri::App`"。
 use tauri::Manager;
 
-/// 隐藏调试构建下附带出来的控制台窗口。
+/// 隐藏调试构建附带的控制台窗口。
 ///
-/// 【为什么用运行期隐藏，而不是再加一个 `windows_subsystem` 属性】
-/// `#![windows_subsystem = "windows"]` 是编译期的，一旦开启，debug 构建就再也
-/// 拿不到 stdout / stderr —— 而排查启动问题（字典加载、前缀表、WebView2 检查）
-/// 恰恰最需要这些输出。运行期调用 `ShowWindow(SW_HIDE)` 只把窗口藏起来：
-/// 界面干净了，日志仍可被重定向捕获。
+/// 采用运行期隐藏而非再叠加一个 `windows_subsystem` 属性：该属性是编译期的，
+/// 一旦开启，debug 构建将无法获取 stdout / stderr，而排查启动问题（字典加载、
+/// 前缀表、WebView2 检查）恰恰依赖这些输出。运行期调用 `ShowWindow(SW_HIDE)`
+/// 仅隐藏窗口，界面整洁，日志仍可被重定向捕获。
 ///
-/// release 构建已经在 `main.rs` 用编译期属性去掉了控制台，
-/// 此时 `GetConsoleWindow()` 返回空句柄，本函数自动跳过。
+/// release 构建已在 `main.rs` 用编译期属性去掉了控制台，此时
+/// `GetConsoleWindow()` 返回空句柄，本函数自动跳过。
 #[cfg(windows)]
 fn hide_console_window() {
     use windows_sys::Win32::System::Console::GetConsoleWindow;
@@ -79,24 +69,23 @@ pub fn run() {
     hide_console_window();
 
     // ---- 启动前检查（preflight，Windows）----
-    // 缺 WebView2 运行库时，Tauri 会在创建窗口那一步直接失败，
-    // 用户看到的现象是「双击没反应」，完全无从下手。
-    // 这里提前拦下来，给一句中文说明 + 一键打开官网。
-    //
-    // 注意：必须在 Builder 之前 —— 一旦开始建窗口，就只剩 Tauri 自己的英文提示了。
+    // 缺 WebView2 运行库时，Tauri 会在创建窗口那一步直接失败，用户看到的
+    // 现象是「双击没反应」。此处提前拦截，给出中文说明并提供一键打开官网。
+    // 必须在构造 Builder 之前执行：一旦开始创建窗口，就只剩 Tauri 自带的
+    // 英文提示。
     #[cfg(windows)]
     webview2::ensure_runtime();
 
     tauri::Builder::default()
         // ---- 插件注册 ----
-        // 剪贴板：任务书第七节第 5 条 —— 因 WebView 中 navigator.clipboard
-        // 的可用性在不同平台/权限下不一致，统一改用官方插件。
+        // 剪贴板：WebView 中 navigator.clipboard 的可用性在不同平台与权限下
+        // 不一致，统一改用官方插件。
         .plugin(tauri_plugin_clipboard_manager::init())
         // 打开外部链接（GitHub 仓库、官方文档）
         .plugin(tauri_plugin_opener::init())
         // ---- 全局状态 ----
         .manage(AppState::new())
-        // Key 管家自带一份状态（模块隔离，不与探测模块的 AppState 混在一起）
+        // Key 管家自带一份状态（模块隔离，与探测模块的 AppState 相互独立）
         .manage(key_butler::vault::KeyButlerState::new())
         // ---- setup 钩子 ----
         .setup(|app| {
@@ -153,8 +142,7 @@ pub fn run() {
             Ok(())
         })
         // ---- 命令注册 ----
-        // 注意：这里的 7 个名字必须与前端 src/api/commands.ts 中的
-        //    COMMAND_NAMES 常量逐字一致，阶段 5 QA 会逐一核对。
+        // 命令名必须与前端 src/api/commands.ts 中 COMMAND_NAMES 常量逐字一致。
         .invoke_handler(tauri::generate_handler![
             commands::list_models,        // 1. 拉取模型列表
             commands::ping_connection,    // 2. 连通性预检

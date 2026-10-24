@@ -1,20 +1,11 @@
 <script setup lang="ts">
 /**
- * ============================================================================
- * ProgressPanel —— 进度与日志面板（左栏）
- * ============================================================================
+ * 进度与日志面板（左栏）：总进度条、分阶段进度气泡、
+ * 每个模型的实时阶段指示（由进度事件驱动）、滚动日志区（按级别着色）。
  *
- * 【职责】
- *   1. 总进度条 + 分阶段进度气泡
- *   2. 每个模型的实时阶段指示（由 probe://progress 事件驱动）
- *   3. 滚动日志区（由 probe://log 事件驱动），按级别着色
- *
- * 【性能考虑】
- * 日志可能高频推送（每个模型的每个阶段都会产生若干条）。
- * 因此这里用 `v-for` + `key` 的虚拟滚动替代方案：
- * 只在 store 层做 600 行上限裁剪，渲染层直接渲染（600 行 DOM 完全可控）。
- * 若未来日志量级上升到数万行，可替换为 NVirtualList。
- * ============================================================================
+ * 性能考虑：日志可能高频推送（每个模型的每个阶段都会产生若干条）。
+ * 在 store 层做 600 行上限裁剪，渲染层直接渲染（600 行 DOM 完全可控）；
+ * 若日志量级上升到数万行，可替换为 NVirtualList。
  */
 
 import { computed, nextTick, ref, watch } from 'vue'
@@ -34,11 +25,9 @@ const autoScroll = ref(true)
 /**
  * 当前显示能力摘要 tooltip 的模型 id；`null` 表示没有。
  *
- * 【为什么手动控制显隐，而不是用 trigger="hover"】
- * 模型列表是可滚动的（`max-h-[42%] overflow-y-auto`），而 Naive 的浮层是
- * teleport 到 body 上按坐标定位的。用 hover 触发时，滚动过程中鼠标坐标没变，
- * 浮层就会跟着一起「滚出」列表容器 —— 表现为悬浮窗飘到窗格外面。
- * 改成手动控制后，只要列表一滚动就立刻收起，问题从根上消失。
+ * 手动控制显隐而非 trigger="hover" 的原因：模型列表可滚动，
+ * 而 Naive 的浮层 teleport 到 body 按坐标定位，滚动过程中浮层
+ * 会跟着内容滚出列表容器。改为手动控制后，列表一滚动就立刻收起。
  */
 const tooltipModelId = ref<string | null>(null)
 
@@ -49,12 +38,11 @@ const logContainer = ref<HTMLElement | null>(null)
 const modelRows = computed(() => props.probe.store.models)
 
 /**
- * 正在进行中的模型（还没出现在 models 里但已有阶段记录的）。
+ * 正在进行中的模型（未出现在 models 里但已有阶段记录的）。
  *
- * 【为什么需要这个】
- * `models` 只在模型**完全探测完**时才被追加。
- * 探测中此处只能从 `stageByModel` 得知「某个 ID 正在处理」。
- * 把这两者合并展示，用户才能看到实时进展而不是一片空白。
+ * `models` 只在模型完全探测完成时才追加；探测中只能从
+ * `stageByModel` 得知某个 ID 正在处理。合并两者展示，
+ * 用户才能看到实时进展。
  */
 const inflight = computed(() => {
   const done = new Set(modelRows.value.map((m: ModelInfo) => m.id))
@@ -107,8 +95,8 @@ const LOG_LEVEL_MARK: Record<string, string> = {
 /**
  * 日志滚动到底部。
  *
- * 用 nextTick 等待 DOM 更新后再滚动，否则 scrollHeight 还是旧值，
- * 会出现「差一行」的经典问题。
+ * 用 nextTick 等待 DOM 更新后再滚动，否则 scrollHeight 是旧值，
+ * 会出现差一行的问题。
  */
 async function scrollToBottom(): Promise<void> {
   if (!autoScroll.value) return
@@ -153,7 +141,7 @@ function summarizeModel(model: ModelInfo): string {
 
 <template>
   <aside class="ms-panel flex min-h-0 flex-col overflow-hidden">
-    <!-- ---------- 头部统计 ---------- -->
+    <!-- ---- 头部统计 ---- -->
     <div class="border-b border-ms-border px-3 py-2.5">
       <div class="flex items-center justify-between">
         <span class="ms-panel-title">实时进度</span>

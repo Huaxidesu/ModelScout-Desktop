@@ -9,7 +9,7 @@ ModelScout —— TypeScript 类型错误批量修复脚本（阶段 5 QA）
       修复：改用 `createDiscreteApi(['message'])` 在模块外拿到 message 实例。
 
   (b) 组件中 `props.probe.store.xxx.value` 的多余 `.value`
-      —— Pinia store 的 setup 返回值经 store 代理后**已经解包**，
+      —— Pinia store 的 setup 返回值经 store 代理后已经解包，
       在组件里访问 `store.percent` 得到的就是 number 而不是 Ref<number>。
       但因为 `probe` 是 props 传入的对象、不是 setup 顶层变量，
       Vue 模板不会二次解包，所以 TS 看到的也是解包后的类型 ——

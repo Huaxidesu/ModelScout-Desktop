@@ -1,27 +1,19 @@
 /**
- * ============================================================================
- * ModelScout —— 阶段 1：接口契约（前后端对齐的唯一事实来源）
- * ============================================================================
+ * 接口契约：前后端对齐的唯一事实来源。
  *
- * 【本文件地位】
  * 本文件是前端 TypeScript 侧对 Rust 后端数据结构的镜像定义。
  * 每一个 interface 都必须与 `src-tauri/src/models.rs` 中的 #[derive(Serialize)]
- * 结构体一一对应；字段名必须完全一致（Rust 侧统一使用
+ * 结构体一一对应；字段名完全一致（Rust 侧统一使用
  * #[serde(rename_all = "camelCase")]，因此这里全部为小驼峰）。
  *
- * 【修改约定】
- * 任何字段增删都必须「三处同步」：
+ * 修改约定：任何字段增删都必须三处同步——
  *   1. src/types/contracts.ts  （本文件）
  *   2. src-tauri/src/models.rs （Rust 结构体）
  *   3. src/api/commands.ts     （若涉及命令签名）
- * 否则阶段 5 QA 的交叉核对会失败。
- * ============================================================================
+ * 否则交叉核对脚本会失败。
  */
 
-/* ---------------------------------------------------------------------------
- * 一、基础枚举（字符串字面量联合类型，与 Rust 的 #[serde(rename_all = "camelCase")]
- *     枚举序列化结果对应）
- * ------------------------------------------------------------------------- */
+// ---- 基础枚举（字符串字面量联合类型，对应 Rust camelCase 枚举序列化结果） ----
 
 /**
  * 探测错误的分类。
@@ -62,7 +54,7 @@ export type TriState = 'supported' | 'unsupported' | 'unknown'
  * 上下文 / 输出上限的取值来源，用于在前端区分「可信度」。
  * 与 Rust 端 `models::LimitSource` 枚举一一对应。
  *
- * - `declared`    : **接口在 /models 中直接声明**，最可信（服务端自己说的）
+ * - `declared`    : 接口在 /models 中直接声明，最可信（服务端自报）
  * - `dictionary`  : 命中本地参数字典，可信度高
  * - `errorParse`  : 通过超大 max_tokens 触发报错后解析得出
  * - `fallback`    : 使用回退值（保守默认值）
@@ -95,25 +87,23 @@ export type ProbeStage =
  * 与 Rust 端 `models::ApiKeySource` 枚举一一对应。
  *
  * - `plain`      : 直接使用 `apiKey` 字段的明文（默认，兼容旧行为）
- * - `env`        : 从 `apiKeyEnvVar` 指定的环境变量读取（由**后端**读取）
+ * - `env`        : 从 `apiKeyEnvVar` 指定的环境变量读取（由后端读取）
  * - `credential` : 从 `apiKeyCredential` 指定的 Windows 凭据管理器通用凭据读取
- *                  （由**后端**读取）
+ *                  （由后端读取）
  *
  * 后两种方式下 `apiKey` 应留空 —— 明文由后端在发起请求前解析，
  * 前端自始至终不接触它。
  */
 export type ApiKeySource = 'plain' | 'env' | 'credential'
 
-/* ---------------------------------------------------------------------------
- * 二、命令入参 / 出参结构体
- * ------------------------------------------------------------------------- */
+// ---- 命令入参 / 出参结构体 ----
 
 /**
  * 传给 `start_probe` 命令的探测配置。
  * 对应 Rust 结构体：`models::ProbeConfig`
  *
  * 注意：`apiKey` 只在 invoke 时向前端 → Rust 单向传递，
- * Rust 端持有它但**绝不**在任何 log / 事件 payload 中回传或打印。
+ * Rust 端持有它但绝不在任何 log / 事件 payload 中回传或打印。
  *
  * 密钥来源：`apiKeySource` 为 `plain` 时用 `apiKey`；
  * 为 `env` / `credential` 时改用 `apiKeyEnvVar` / `apiKeyCredential`，
@@ -186,9 +176,9 @@ export interface ModelInfo {
   /**
    * 能力数据的整体来源说明（中文），例如「接口声明（schema 2.4）：上下文、工具调用、推理」。
    *
-   * **为什么要展示**：实测发现部分网关的 `/models` 声明可能与官方文档不符
-   * （例如接口称某模型支持 tools、文档称不支持）。把来源标出来，
-   * 用户才能判断该采信谁，而不是盲信一个值。
+   * 展示原因：部分网关的 `/models` 声明可能与官方文档不符
+   * （例如接口称某模型支持 tools、文档称不支持）。标出来源，
+   * 用户才能判断该采信哪一个值。
    */
   capsSource: string
 
@@ -270,8 +260,8 @@ export interface ModelListResult {
  * 接口在 `/models` 响应中「自报」的能力（OpenRouter / 聚合网关的扩展 schema）。
  * 对应 Rust 结构体：`models::DeclaredCaps`
  *
- * 语义很关键：字段为 `null` = 接口**未声明**，需要真实请求探测；
- * 有值 = **直接采信声明**，跳过对应的探测请求（省额度、更快、更准）。
+ * 语义关键：字段为 `null` = 接口未声明，需要真实请求探测；
+ * 有值 = 直接采信声明，跳过对应的探测请求（省额度、更快、更准）。
  */
 export interface DeclaredCaps {
   /** 上下文窗口上限（token） */
@@ -283,10 +273,10 @@ export interface DeclaredCaps {
   /** 是否支持图片输入（视觉/附件） */
   supportsVision: boolean | null
   /**
-   * 是否为**推理模型**（`supported_parameters` 中存在 `reasoning`）。
+   * 是否为推理模型（`supported_parameters` 中存在 `reasoning`）。
    *
-   * 注意：这比「响应里出现 reasoning_content」更可靠 —— 实测发现部分网关
-   * 对**所有**模型都会返回 `reasoning_content` 字段（可能为空），
+   * 注意：这比「响应里出现 reasoning_content」更可靠——部分网关
+   * 对所有模型都会返回 `reasoning_content` 字段（可能为空），
    * 靠响应体判断会把非推理模型误判为推理模型。
    */
   supportsReasoning: boolean | null
@@ -356,14 +346,12 @@ export interface SaveConfigResult {
   path: string
 }
 
-/* ---------------------------------------------------------------------------
- * 三、事件 payload 结构体
- * ------------------------------------------------------------------------- */
+// ---- 事件 payload 结构体 ----
 /**
  * 事件 `probe://progress` 的 payload。
  * 对应 Rust 结构体：`models::ProbeProgress`
  *
- * 说明：Rust 端采用**事件名与 payload 一同注入**的设计，
+ * 说明：Rust 端采用事件名与 payload 一同注入的设计，
  * payload 内自带 `runId`，前端据此丢弃过期运行的事件。
  */
 export interface ProbeProgress {
@@ -449,13 +437,11 @@ export interface ProbeFatal {
   stage: ProbeStage
 }
 
-/* ---------------------------------------------------------------------------
- * 四、事件名常量（唯一集中定义，Rust 端 emit 的字符串必须与此完全一致）
- * ------------------------------------------------------------------------- */
+// ---- 事件名常量（唯一集中定义，Rust 端 emit 的字符串必须与此完全一致） ----
 
 /**
  * 全部 Tauri 事件名常量。
- * 阶段 5 QA 会逐一核对本表与 `src-tauri/src/probe.rs` 中的 emit 字面量。
+ * 需与 `src-tauri/src/probe.rs` 中的 emit 字面量逐一核对保持一致。
  */
 export const EVENT_NAMES = {
   /** 进度更新（逐阶段） */
@@ -480,14 +466,11 @@ export const EVENT_NAMES = {
 /** 事件名联合类型 */
 export type EventName = (typeof EVENT_NAMES)[keyof typeof EVENT_NAMES]
 
-/* ---------------------------------------------------------------------------
- * 五、命令名常量（唯一集中定义，Rust 端 generate_handler 注册名必须与此一致）
- * ------------------------------------------------------------------------- */
+// ---- 命令名常量（唯一集中定义，Rust 端 generate_handler 注册名必须与此一致） ----
 
 /**
  * 全部 Tauri 命令名常量。
- * 阶段 5 QA 会逐一核对本表与 `src-tauri/src/lib.rs` 中
- * `generate_handler![]` 的注册名。
+ * 需与 `src-tauri/src/lib.rs` 中 `generate_handler![]` 的注册名逐一核对保持一致。
  */
 export const COMMAND_NAMES = {
   /** 仅拉取模型列表 */
@@ -538,17 +521,14 @@ export const COMMAND_NAMES = {
 /** 命令名联合类型 */
 export type CommandName = (typeof COMMAND_NAMES)[keyof typeof COMMAND_NAMES]
 
-/* ---------------------------------------------------------------------------
- * 六、Key 管家（Beta）契约
- * ---------------------------------------------------------------------------
- * 与 `src-tauri/src/key_butler/models.rs` 逐字段一一对应（camelCase）。
- * 契约三处同步约定同样适用于本模块：改字段必须同改
- * `key_butler/models.rs` + 本文件 + `docs/CONTRACTS.md`。
- *
- * 【安全约定】`KeyEntry` **不含 Key 明文**，只有 `maskedKey`（格式
- * `sk-ab***cdef`）。完整明文只在 `key_butler_reveal` 的返回值里出现一次，
- * 仅供一键复制，不落日志、不落事件。
- * ------------------------------------------------------------------------- */
+// ---- Key 管家（Beta）契约 ----
+// 与 `src-tauri/src/key_butler/models.rs` 逐字段一一对应（camelCase）。
+// 契约三处同步约定同样适用于本模块：改字段必须同改
+// `key_butler/models.rs` + 本文件 + `docs/CONTRACTS.md`。
+//
+// 安全约定：`KeyEntry` 不含 Key 明文，只有 `maskedKey`（格式
+// `sk-ab***cdef`）。完整明文只在 `key_butler_reveal` 的返回值里出现一次，
+// 仅供一键复制，不落日志、不落事件。
 
 /**
  * 一条 Key 的四态状态。
@@ -559,7 +539,7 @@ export type CommandName = (typeof COMMAND_NAMES)[keyof typeof COMMAND_NAMES]
  * - `invalid`      : 401 / 403，Key 已失效
  * - `error`        : 网络 / 429 / 5xx / 解析失败，有效性未知
  *
- * 注意：**未检测过**的 Key 也用 `error` 承载，前端以 `lastCheckedAt == null`
+ * 注意：未检测过的 Key 也用 `error` 承载，前端以 `lastCheckedAt == null`
  * 区分并显示「未检测」，且不计入四态汇总。
  */
 export type KeyStatus = 'active' | 'insufficient' | 'invalid' | 'error'
@@ -610,7 +590,7 @@ export interface BalanceEndpoint {
 }
 
 /**
- * 一条被管理的 Key（**不含明文**）。
+ * 一条被管理的 Key（不含明文）。
  * 对应 Rust 结构体：`key_butler::models::KeyEntry`
  */
 export interface KeyEntry {
@@ -647,7 +627,7 @@ export interface KeyEntry {
 }
 
 /**
- * 一条余额快照。**不含 Key 明文**，可明文落盘。
+ * 一条余额快照。不含 Key 明文，可明文落盘。
  * 对应 Rust 结构体：`key_butler::models::Snapshot`
  */
 export interface Snapshot {
@@ -748,7 +728,7 @@ export interface VaultStatus {
   entryCount: number
   /**
    * 是否使用「无密码保存」：数据密钥由 Windows DPAPI 绑定当前账户，启动时自动解开。
-   * **磁盘上依然是 AES-256-GCM 密文，不是明文。**
+   * 磁盘上依然是 AES-256-GCM 密文，不是明文。
    *
    * `enabled && !unlocked && systemKey` 表示「这份数据属于别的 Windows 账户
    * 或另一台电脑」，需要与「等待输入主密码」区分开。
@@ -773,7 +753,7 @@ export interface KeyConfigPatch {
  * `key_butler_update_many` 的入参：一次改多条 Key。
  * 对应 Rust 结构体：`key_butler::models::KeyBatchPatch`
  *
- * 语义与 `KeyConfigPatch` 一致 —— **`undefined` 表示该项不动**。
+ * 语义与 `KeyConfigPatch` 一致：`undefined` 表示该项不动。
  */
 export interface KeyBatchPatch {
   /** 新的平台标识 */

@@ -1,23 +1,16 @@
-/**
- * ============================================================================
- * ModelScout —— HTTP 客户端封装与探测引擎
- * ============================================================================
- *
- * 【本文件包含三块内容】
- *   1. `ApiClient`      —— reqwest 客户端封装：URL 拼装、鉴权头、统一错误分类
- *   2. 探测原语          —— 单模型的工具调用 / 附件 / 推理 / 上限探测
- *   3. 并发引擎          —— tokio Semaphore + futures buffer_unordered + 中止控制
- *
- * 【安全约束（任务书第五节）】
- *   - 任何日志、事件 payload、错误信息中都**不得**出现完整 API Key。
- *     所有上游返回的正文在对外暴露前必须过 `error::scrub_secrets`。
- *   - Key 只出现在 `ApiClient` 构造的 `Authorization` 头里。
- *
- * 【超时策略（任务书第五节）】
- *   reqwest 客户端统一设置 30s 默认超时（可被 ProbeConfig.timeout_secs 覆盖）。
- *   超时归类为 `ProbeErrorKind::NetworkTimeout`。
- * ============================================================================
- */
+//! HTTP 客户端封装与并发探测引擎。
+//!
+//! 组成：
+//!   1. `ApiClient` —— reqwest 客户端封装：URL 拼装、鉴权头、统一错误分类；
+//!   2. 探测原语 —— 单模型的工具调用 / 附件 / 推理 / 上限探测；
+//!   3. 并发引擎 —— tokio Semaphore + futures buffer_unordered + 中止控制。
+//!
+//! 安全约束：任何日志、事件 payload、错误信息中都不得出现完整 API Key；
+//! 所有上游返回的正文在对外暴露前必须过 `error::scrub_secrets`；
+//! Key 只出现在 `ApiClient` 构造的 `Authorization` 头里。
+//!
+//! 超时策略：reqwest 客户端统一设置 30s 默认超时（可被
+//! `ProbeConfig.timeout_secs` 覆盖），超时归类为 `ProbeErrorKind::NetworkTimeout`。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -26,7 +19,7 @@ use std::time::{Duration, Instant};
 use futures::stream::{self, StreamExt};
 use serde_json::{json, Value};
 // `Runtime` 用于把本模块的事件发射泛化到任意运行时：
-// 生产用 Wry，集成测试用 `tauri::test::MockRuntime`（见 D-37 的测试）。
+// 生产用 Wry，集成测试用 `tauri::test::MockRuntime`。
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::{Mutex, Semaphore};
 
@@ -40,23 +33,20 @@ use crate::models::{
     ProbeStatus, TriState,
 };
 
-/* ===========================================================================
- * 事件端口（依赖倒置）
- * ========================================================================= */
+// ---- 事件端口（依赖倒置） ----
 
 /// 事件发射端口。
 ///
-/// **为什么要这层抽象**：`run_engine` 原本直接依赖 `AppHandle`，
-/// 导致它**无法在没有 Tauri 应用的场景下被测试** ——
-/// D-37 那个「界面永远 0/0」的 bug 正因如此逃过了全部检查。
+/// 事件发射端口（依赖倒置）。
 ///
-/// 引入本 trait 后：
-///   - 生产环境传 [`TauriSink`]（内部就是 `AppHandle::emit`）；
-///   - 测试传一个「记录型 sink」，把事件收进 `Vec` 便于断言。
+/// `run_engine` 不直接依赖 `AppHandle`，使引擎可以在没有 Tauri 应用的
+/// 场景下被测试：
+///   - 生产环境传 [`TauriSink`]（内部即 `AppHandle::emit`）；
+///   - 测试传记录型 sink，把事件收进 `Vec` 便于断言。
 ///
-/// 这样引擎与 Tauri 运行时解耦，集成测试**不必启用 `tauri` 的 `test` feature** ——
-/// 而正是那个 feature 会拉进完整 GUI 运行时（comctl32 / user32 / dwmapi…），
-/// 触发本机的 `STATUS_ENTRYPOINT_NOT_FOUND` 问题（详见 D-37）。
+/// 引擎与 Tauri 运行时解耦后，集成测试不必启用 `tauri` 的 `test` feature；
+/// 该 feature 会拉入完整 GUI 运行时（comctl32 / user32 / dwmapi 等），
+/// 触发 `STATUS_ENTRYPOINT_NOT_FOUND` 启动失败。
 pub trait EventSink: Clone + Send + Sync + 'static {
     /// 推送进度更新
     fn progress(&self, payload: ProbeProgress);
@@ -89,9 +79,7 @@ impl<R: Runtime> EventSink for TauriSink<R> {
     }
 }
 
-/* ===========================================================================
- * 常量
- * ========================================================================= */
+// ---- 常量 ----
 
 /// 探测「超大 max_tokens」时使用的值。
 /// 取 999999 是因为它超过当前所有已知模型的输出上限，
@@ -116,9 +104,7 @@ const SMALL_MAX_TOKENS: u64 = 16;
 /// 拉取 /models 列表时允许的最大超时（列表不消耗生成额度，给足时间）。
 const MODELS_LIST_TIMEOUT_SECS: u64 = 60;
 
-/* ===========================================================================
- * 一、ApiClient：reqwest 封装
- * ========================================================================= */
+// ---- 一、ApiClient：reqwest 封装 ----
 
 /// OpenAI 兼容 API 的客户端封装。
 ///
@@ -132,7 +118,7 @@ pub struct ApiClient {
     http: reqwest::Client,
     /// 规范化后的 Base URL（无尾部斜杠）
     base_url: String,
-    /// API Key 明文。仅用于构造 Authorization 头，**绝不**打印。
+    /// API Key 明文。仅用于构造 Authorization 头，绝不打印。
     api_key: String,
     /// 单请求超时
     timeout: Duration,
@@ -195,7 +181,7 @@ impl ApiClient {
 
     /// 构造一个带鉴权头的 POST 请求。
     ///
-    /// **本方法是全项目唯一把 Key 写入请求的地方。**
+    /// 本方法是全项目唯一把 Key 写入请求的地方。
     fn post(&self, path: &str, body: &Value) -> reqwest::RequestBuilder {
         self.http
             .post(self.url(path))
@@ -214,7 +200,7 @@ impl ApiClient {
             .header("Accept", "application/json")
     }
 
-    /// 构造一个**覆盖单请求超时**的 GET 请求。
+    /// 构造一个覆盖单请求超时的 GET 请求。
     ///
     /// 【为什么需要单独一个方法】
     /// `reqwest::Client` 上设置的 `.timeout()` 是「默认超时」，
@@ -222,7 +208,7 @@ impl ApiClient {
     /// 拉取 `/models` 列表时，某些网关（尤其是聚合了几百个模型的
     /// 中转服务）响应可能远超用户配置的 30s；而列表请求不消耗生成
     /// 额度，给足时间更合理。因此这里以 `MODELS_LIST_TIMEOUT_SECS`
-    /// 与用户配置值中的**较大者**作为该请求的超时。
+    /// 与用户配置值中的较大者作为该请求的超时。
     fn get_with_timeout(&self, path: &str, timeout: Duration) -> reqwest::RequestBuilder {
         self.get(path).timeout(timeout)
     }
@@ -234,9 +220,9 @@ impl ApiClient {
 
     /// 发送请求并把响应规约成 `Result<(status, body_text), ProbeError>`。
     ///
-    /// 这是所有探测原语的公共底座。它**不把非 2xx 当作 Err**，
+    /// 这是所有探测原语的公共底座。它不把非 2xx 当作 Err，
     /// 而是把状态码与正文原样返回给调用方 —— 因为很多探测
-    /// （尤其是上限探测）**就是要看错误信息**。
+    /// （尤其是上限探测）就是要看错误信息。
     ///
     /// # 返回
     /// - `Ok((status, text))`: 成功拿到 HTTP 响应（无论状态码）
@@ -258,7 +244,7 @@ impl ApiClient {
         }
     }
 
-    /// 发送请求并**要求 2xx**。非 2xx 时把已分类的错误连同正文一起返回。
+    /// 发送请求并要求 2xx。非 2xx 时把已分类的错误连同正文一起返回。
     ///
     /// 这是需要「必须成功」语义的调用方（如拉取模型列表）使用的入口。
     async fn send_strict(
@@ -312,9 +298,7 @@ fn summarize_text(text: &str, max_chars: usize) -> String {
     out
 }
 
-/* ===========================================================================
- * 二、模型列表拉取
- * ========================================================================= */
+// ---- 二、模型列表拉取 ----
 
 /// 拉取 `/models` 并解析为轻量条目列表。
 ///
@@ -431,7 +415,7 @@ pub async fn fetch_model_list(
 /// 兼容 OpenRouter 风格的扩展 schema（详见 [`DeclaredCaps`]）。
 /// 任何字段缺失都保持 `None`，交由真实请求探测补足。
 ///
-/// **为什么值得做**：这类网关会把上下文长度、输出上限、是否支持 tools / 图片
+/// 为什么值得做：这类网关会把上下文长度、输出上限、是否支持 tools / 图片
 /// 直接写在 `/models` 里。直接采信可以：① 省掉每个模型 3~4 次真实请求（省额度）；
 /// ② 规避探测请求在这类网关上「不按常理出牌」的响应（例如 502 / 429）。
 fn parse_declared_caps(item: &Value) -> DeclaredCaps {
@@ -482,7 +466,7 @@ fn parse_declared_caps(item: &Value) -> DeclaredCaps {
                 caps.max_output_limit = Some(n);
             }
             // 关键：`supported_parameters.tools` / `reasoning` 的形态都是
-            // `{ "type": "boolean" }`，因此判断依据是「**该键是否存在**」，
+            // `{ "type": "boolean" }`，因此判断依据是「该键是否存在」，
             // 而不是它的值。
             // 一旦声明了 supported_parameters：
             //   - 缺失 tools     → 不支持工具调用
@@ -518,9 +502,7 @@ fn status_is_404_hint(err: &ProbeError) -> bool {
     err.http_status == 404
 }
 
-/* ===========================================================================
- * 三、能力探测原语
- * ========================================================================= */
+// ---- 三、能力探测原语 ----
 
 /// 工具调用探测的结果。
 #[derive(Debug, Clone)]
@@ -538,16 +520,16 @@ pub struct ToolProbeOutcome {
 /// 【策略】
 /// 发送一个带 `tools` 参数的最小请求，然后分三种情况判定：
 ///
-///   1. **HTTP 2xx**：检查响应 JSON 中是否出现 `tool_calls`
-///      或 `function_call`。注意：模型**不一定会真的调用**工具
+///   1. HTTP 2xx：检查响应 JSON 中是否出现 `tool_calls`
+///      或 `function_call`。注意：模型不一定会真的调用工具
 ///      （对它来说 "hi" 不需要工具），因此「2xx 但没有 tool_calls」
-///      **不能**判定为不支持 —— 能够接受 tools 参数并正常返回，
+///      不能判定为不支持 —— 能够接受 tools 参数并正常返回，
 ///      本身就是强证据。故判为 `Supported`，并在 evidence 里说明。
 ///
-///   2. **HTTP 4xx 且报错提到 tools / function**：明确不支持 → `Unsupported`。
+///   2. HTTP 4xx 且报错提到 tools / function：明确不支持 → `Unsupported`。
 ///
-///   3. **HTTP 4xx/5xx 但报错与 tools 无关**（例如 429 限流、
-///      401 Key 失效、model 不存在）：**无法判定** → `Unknown`，
+///   3. HTTP 4xx/5xx 但报错与 tools 无关（例如 429 限流、
+///      401 Key 失效、model 不存在）：无法判定 → `Unknown`，
 ///      并保留错误让前端展示。这正是引入三态而不是 bool 的原因。
 pub async fn probe_tools(client: &ApiClient, model_id: &str) -> ToolProbeOutcome {
     let body = json!({
@@ -708,7 +690,7 @@ fn inspect_response(text: &str) -> (bool, bool) {
             }
         }
 
-        // 注意：JSON 解析成功时**必须直接返回结构化结论**，绝不能落到下面的
+        // 注意：JSON 解析成功时必须直接返回结构化结论，绝不能落到下面的
         //    子串回退。
         //
         // 【之前为什么错】原实现在这里写的是
@@ -719,7 +701,7 @@ fn inspect_response(text: &str) -> (bool, bool) {
         //    被误判成「是推理模型」。
         //
         //    这与探测语义直接冲突：字段存在 ≠ 有推理内容。服务端返回空串
-        //    恰恰说明该模型**没有**产出推理，必须判定为 false。
+        //    恰恰说明该模型没有产出推理，必须判定为 false。
         //
         //    子串回退的本意是「仅在 JSON 完全解析不出来时使用」，
         //    只要 JSON 解析成功，结构化信息永远比子串匹配可信。
@@ -734,9 +716,7 @@ fn inspect_response(text: &str) -> (bool, bool) {
     )
 }
 
-/* ---------------------------------------------------------------------------
- * 二之二、推理能力「轻量采样」（当接口已自报其他能力时使用）
- * ------------------------------------------------------------------------- */
+// ---- 二之二、推理能力「轻量采样」（当接口已自报其他能力时使用） ----
 
 /// 轻量推理采样的结果。
 #[derive(Debug, Clone)]
@@ -751,7 +731,7 @@ pub struct ReasoningSampleOutcome {
 
 /// 只发一条最短对话，检查响应里有没有 `reasoning_content`。
 ///
-/// **什么时候用**：当接口已经在 `/models` 里声明了「工具调用 / 视觉 / 上限」时，
+/// 什么时候用：当接口已经在 `/models` 里声明了「工具调用 / 视觉 / 上限」时，
 /// 就没必要再发带 `tools` 或图片的请求去验证它们 —— 那些请求在这类聚合网关上
 /// 常常返回 502 / 429 之类的「非标准」响应，既浪费额度又拿不到有用信息。
 /// 此时只保留一次最廉价的对话采样，专门用于判定「是否推理模型」。
@@ -825,10 +805,10 @@ pub struct VisionProbeOutcome {
 /// 【策略】
 /// 发送一条包含 `image_url`（1x1 PNG 的 Base64 data URI）的多模态消息。
 ///
-///   - **HTTP 2xx** → 明确支持
-///   - **4xx 且报错提到 image / vision / content type / multimodal**
+///   - HTTP 2xx → 明确支持
+///   - 4xx 且报错提到 image / vision / content type / multimodal
 ///     → 明确不支持（服务端看懂了请求但拒绝）
-///   - **其他 4xx/5xx**（限流、鉴权、模型不存在） → 无法判定
+///   - 其他 4xx/5xx（限流、鉴权、模型不存在） → 无法判定
 ///
 /// 【为什么用 1x1 像素】
 /// token 消耗接近 0；同时避免因图片尺寸过大触发的服务端预处理错误，
@@ -907,7 +887,7 @@ pub async fn probe_vision(client: &ApiClient, model_id: &str) -> VisionProbeOutc
 
 /// 推理模型名称正则。
 ///
-/// 只匹配**明确的**推理模型标识，避免误伤。
+/// 只匹配明确的推理模型标识，避免误伤。
 /// 例如不能简单地用 `*o1*` 做子串匹配 —— 那会把 `gpt-4o1`、
 /// `llama-3-8b-o1-like` 这类无关名字也判成推理模型。
 ///
@@ -926,7 +906,7 @@ static REASONING_NAME_PATTERNS: &[&str] = &[
     // 但 "vision-o1-like" 语义上是「一个叫 o1 的视觉模型变体」，
     // 并非 OpenAI 的推理模型。这类误判会直接污染探测结果。
     //
-    // 精确写法：o 系列标识必须出现在模型 ID 的**起始位置**，
+    // 精确写法：o 系列标识必须出现在模型 ID 的起始位置，
     // 或紧跟在 `vendor/`、`vendor-` 这种明确的厂商命名空间之后。
     // 例：`o1-mini` ✓  `openai/o1` ✓  `azure-o1-preview` ✓
     //     `vision-o1-like` ✗  `my-o3-clone` ✗
@@ -974,9 +954,7 @@ pub fn reasoning_by_name(model_id: &str) -> Option<String> {
     None
 }
 
-/* ===========================================================================
- * 四、上限探测
- * ========================================================================= */
+// ---- 四、上限探测 ----
 
 /// 上限探测的结果。
 #[derive(Debug, Clone)]
@@ -998,7 +976,7 @@ pub struct LimitProbeOutcome {
 /// 【流程】
 ///   1. 先用本地字典匹配（本函数调用方已做，这里只处理未命中的情况）。
 ///   2. 发送 `max_tokens = 999999` 的最小请求。
-///   3. 若服务端**直接接受了**（2xx）—— 说明该端点不做上限校验，
+///   3. 若服务端直接接受了（2xx）—— 说明该端点不做上限校验，
 ///      无法由此反推，返回 Unknown 并说明原因。
 ///   4. 若报错，则用 `max_tokens::parse_limits` 解析正文。
 ///      解析到 → `LimitSource::ErrorParse`；解析不到 → `Unknown`。
@@ -1030,7 +1008,7 @@ pub async fn probe_limits_by_error(client: &ApiClient, model_id: &str) -> LimitP
     let scrubbed = scrub_secrets(&text, &client.api_key);
 
     if (200..300).contains(&status) {
-        // 端点不校验 max_tokens，无法反推。这是**正常**结果，不算错误。
+        // 端点不校验 max_tokens，无法反推。这是正常结果，不算错误。
         return LimitProbeOutcome {
             context_limit: 0,
             max_output_limit: 0,
@@ -1090,9 +1068,7 @@ pub async fn probe_limits_by_error(client: &ApiClient, model_id: &str) -> LimitP
     }
 }
 
-/* ===========================================================================
- * 五、并发探测引擎
- * ========================================================================= */
+// ---- 五、并发探测引擎 ----
 
 /// 并发引擎的运行期共享状态。
 ///
@@ -1162,9 +1138,7 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/* ---------------------------------------------------------------------------
- * 事件发射工具
- * ------------------------------------------------------------------------- */
+// ---- 事件发射工具 ----
 
 /// 统一的进度发射函数。
 ///
@@ -1272,9 +1246,7 @@ fn sanitize_log_line(input: &str) -> String {
     summarize_text(&out, 500)
 }
 
-/* ---------------------------------------------------------------------------
- * 单模型探测流水线
- * ------------------------------------------------------------------------- */
+// ---- 单模型探测流水线 ----
 
 /// 对单个模型执行完整探测流水线，返回填好的 `ModelInfo`。
 ///
@@ -1287,7 +1259,7 @@ fn sanitize_log_line(input: &str) -> String {
 ///   4. `LimitProbe`     —— 字典优先；未命中且用户开启时才发超大 max_tokens。
 ///
 /// 【短路规则】
-/// 当第 1 步给出「Key 无效」或「Base URL 错误」这类**全局性**错误时，
+/// 当第 1 步给出「Key 无效」或「Base URL 错误」这类全局性错误时，
 /// 跳过后续阶段 —— 它们是端点级问题，不是模型级问题，
 /// 对每个模型重复请求只会浪费时间并加重限流。
 async fn probe_one_model<S: EventSink>(
@@ -1355,8 +1327,8 @@ async fn probe_one_model<S: EventSink>(
         );
     }
 
-    // 汇总「能力数据来源」，供界面展示 —— 让用户知道哪些值是接口说的、哪些是实测的。
-    // 这一点很重要：实测发现接口声明可能与官方文档不符（见 D‑34）。
+    // 汇总「能力数据来源」，供界面展示——接口声明可能与官方文档不符，
+    // 标注来源后用户才能判断该采信哪个值。
     info.caps_source = if declared.is_empty() {
         "实测探测".to_string()
     } else {
@@ -1398,7 +1370,7 @@ async fn probe_one_model<S: EventSink>(
 
     if declared.supports_tools.is_some() {
         if declared.supports_reasoning.is_some() {
-            // 工具调用与推理能力都已声明 → 该模型**一次请求都不用发**
+            // 工具调用与推理能力都已声明 → 该模型一次请求都不用发
             emit_log(
                 &app,
                 &state,
@@ -1695,9 +1667,7 @@ async fn probe_one_model<S: EventSink>(
     info
 }
 
-/* ---------------------------------------------------------------------------
- * 并发主引擎
- * ------------------------------------------------------------------------- */
+// ---- 并发主引擎 ----
 
 /// 并发探测引擎的配置。
 pub struct EngineOptions {
@@ -1722,7 +1692,7 @@ pub struct EngineOutcome {
 /// 【并发实现】
 /// 采用「Semaphore 限流 + buffer_unordered 流式调度」的组合：
 ///
-///   - `Semaphore` 在 `probe_one_model` 内部获取许可，因此**真正的**
+///   - `Semaphore` 在 `probe_one_model` 内部获取许可，因此真正的
 ///     并发请求数被严格限制在 `concurrency` 以内。
 ///   - `buffer_unordered(concurrency)` 控制同时在飞的任务数，
 ///     使得内存占用与任务数无关（不会一次性 spawn 几百个 future）。
@@ -1737,14 +1707,12 @@ pub struct EngineOutcome {
 /// 每个任务在阶段边界检查 `state.cancelled`，一旦置位立即返回。
 /// 已发出的 HTTP 请求无法取消（reqwest 不提供 per-request cancel），
 /// 但它们会在超时后自然结束，不会阻塞主流程返回。
-/// 从运行状态中取出「已完成的模型」，作为结果的**唯一事实来源**。
+/// 从运行状态中取出「已完成的模型」，作为结果的唯一事实来源。
 ///
 /// 单独抽成函数有两个目的：
-///   1. 让 `run_engine` 不再维护第二个累积变量 ——
-///      D-37 那个「界面永远 0/0」的 bug 正是两份变量只写了一份导致的；
-///   2. 本函数只依赖 `RunState`、**不需要 AppHandle**，
-///      因此可以直接单元测试。这是 D-37 之后补上的、
-///      真正覆盖「结果收集路径」的测试（此前 36 个单测全是纯函数，无一覆盖此处）。
+///   1. `run_engine` 不再维护第二个累积变量——结果收集路径只有这一处，
+///      避免两份变量只写一份导致界面显示 0/0；
+///   2. 本函数只依赖 `RunState`、不需要 AppHandle，可直接单元测试。
 async fn collect_results(state: &Arc<RunState>) -> Vec<ModelInfo> {
     let mut out = {
         let guard = state.results.lock().await;
@@ -1813,12 +1781,10 @@ pub async fn run_engine<S: EventSink>(
     let mut global_errors: Vec<ProbeError> = Vec::new();
 
     while let Some(info) = stream.next().await {
-        // ★★ 关键：把本次结果写入 `state.results` —— 它是结果的**唯一事实来源**。
-        //
-        // 历史上这里曾把结果只写进一个局部的 `collected` 变量，而 `state.results`
-        // 另写一份，两份累积变量只写了一份，导致返回值恒为空、界面永远显示
-        // 「0/0 暂无探测结果」（见 D-37）。
-        // 现在统一为单一出口：循环只写这里，返回值由 `collect_results()` 派生。
+        // 关键：把本次结果写入 `state.results`——它是结果的唯一事实来源。
+        // 循环只写这里，返回值由 `collect_results()` 派生；
+        // 结果收集必须只有这一个出口，两份累积变量只写一份会导致
+        // 返回值恒为空、界面显示 0/0。
         {
             let mut guard = state.results.lock().await;
             guard.push(info.clone());
@@ -1890,8 +1856,8 @@ pub async fn run_engine<S: EventSink>(
         }
     }
 
-    // 结果**唯一来源**：直接从 `state.results` 派生（见 D-37）。
-    // 不再维护第二个累积变量 —— 那正是「只写一份、另一份恒空」bug 的温床。
+    // 结果唯一来源：直接从 `state.results` 派生；
+    // 不维护第二个累积变量，避免「只写一份、另一份恒空」。
     let collected = collect_results(&state).await;
 
     let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -1920,9 +1886,7 @@ fn tri_label(state: TriState) -> &'static str {
     }
 }
 
-/* ---------------------------------------------------------------------------
- * 快照构造
- * ------------------------------------------------------------------------- */
+// ---- 快照构造 ----
 
 /// 依据运行状态构造一份快照（供 `get_probe_state` 使用）。
 pub async fn build_snapshot(
@@ -2006,9 +1970,7 @@ pub fn build_summary(run_id: &str, outcome: EngineOutcome) -> ProbeRunSummary {
     }
 }
 
-/* ---------------------------------------------------------------------------
- * 便于外部使用的辅助函数
- * ------------------------------------------------------------------------- */
+// ---- 便于外部使用的辅助函数 ----
 
 /// 生成一个新的运行 ID。
 ///
@@ -2030,9 +1992,7 @@ pub fn describe_config(config: &ProbeConfig) -> String {
     )
 }
 
-/* ---------------------------------------------------------------------------
- * 单元测试
- * ------------------------------------------------------------------------- */
+// ---- 单元测试 ----
 
 #[cfg(test)]
 mod tests {
@@ -2122,15 +2082,12 @@ mod tests {
         })
     }
 
-    /// **回归测试（D-37）：结果收集路径必须把「已完成模型」如实取出。**
+    /// 回归测试：结果收集路径必须把「已完成模型」如实取出。
     ///
-    /// 这个测试存在的唯一理由：`run_engine` 曾经维护两个累积变量
-    /// （局部的 `collected` 与共享的 `state.results`），却只写了一份，
-    /// 导致命令返回值恒为空、界面永远显示「0/0 暂无探测结果」，
-    /// 而日志里每个模型都显示「完成」。
-    ///
-    /// 此前 36 个单测全是纯函数测试（解析 / 正则 / 脱敏…），
-    /// **没有任何一个覆盖这条路径**，所以那个 bug 才逃过了全部检查。
+    /// 约束来源：`run_engine` 的结果必须写入共享的 `state.results`，
+    /// 由 `collect_results()` 派生返回值。若另写局部累积变量，
+    /// 会出现「日志显示完成、命令返回值恒空」的静默失败，
+    /// 纯函数单测无法覆盖这条路径，因此需要本端到端测试。
     #[tokio::test]
     async fn collect_results_returns_every_finished_model() {
         let state = RunState::new("run-test".to_string(), 2);
