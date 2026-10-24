@@ -18,6 +18,7 @@ import { computed, ref } from 'vue'
 import { NButton, NCheckbox, NDropdown, NTooltip, useMessage } from 'naive-ui'
 
 import { keyButlerReveal } from '@/api/commands'
+import { useProvidedListTooltip } from '@/composables/useScrollSafeTooltip'
 import type { KeyEntry, KeyStatus } from '@/types/contracts'
 import { formatBalance, formatRelativeTime, STATUS_LABELS } from '@/stores/keyButler'
 import { copyText } from './clipboard'
@@ -41,6 +42,18 @@ const emit = defineEmits<{
 }>()
 
 const message = useMessage()
+
+/**
+ * 状态 tooltip 的浮层守卫：Key 列表可滚动，hover 触发的浮层会跟着行
+ * 滚出列表边缘，滚动补发的 mouseenter 还会令浮层反复重开竞速。
+ * 改为受控显隐；守卫由 KeyButlerView 提供并绑定列表滚动，
+ * 详见 useScrollSafeTooltip。
+ */
+const {
+  openKey: openTooltipKey,
+  enter: enterTooltip,
+  leave: leaveTooltip,
+} = useProvidedListTooltip()
 
 /** 是否从未检测过 */
 const neverChecked = computed(() => props.entry.lastCheckedAt === null)
@@ -142,9 +155,18 @@ function handleMenu(key: string): void {
     </div>
 
     <!-- 状态 -->
-    <NTooltip trigger="hover" style="max-width: 320px">
+    <NTooltip
+      trigger="manual"
+      :show="openTooltipKey === entry.id"
+      style="max-width: 320px"
+    >
       <template #trigger>
-        <span class="flex w-[86px] shrink-0 items-center gap-1" :class="statusMeta.className">
+        <span
+          class="flex w-[86px] shrink-0 items-center gap-1"
+          :class="statusMeta.className"
+          @mouseenter="enterTooltip(entry.id)"
+          @mouseleave="leaveTooltip()"
+        >
           <span>{{ statusMeta.icon }}</span>
           <span>{{ statusMeta.label }}</span>
         </span>

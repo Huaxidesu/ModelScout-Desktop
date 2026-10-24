@@ -25,6 +25,7 @@ import {
 
 import { useProbe } from '@/composables/useProbe'
 import { formatDuration, formatTokens, LIMIT_SOURCE_LABELS } from '@/composables/useProbe'
+import { useScrollSafeTooltip } from '@/composables/useScrollSafeTooltip'
 import type { ModelInfo, TriState, LimitSource } from '@/types/contracts'
 
 const props = defineProps<{
@@ -40,14 +41,23 @@ const emit = defineEmits<{
 const dense = ref(true)
 
 /**
- * 当前显示 tooltip 的单元格标识；`null` 表示没有。
+ * 表格单元格 tooltip 的浮层守卫。
  *
  * 手动控制显隐而非 trigger="hover" 的原因：结果表格是虚拟滚动的，
- * 而 Naive 的浮层 teleport 到 body 按坐标定位，滚动过程中浮层不会重新定位，
- * 会随内容滚出表格。改为受控后，表格一滚动就整体收起，
+ * 而 Naive 的浮层 teleport 到 body 按坐标定位，滚动过程中浮层会
+ * 跟着单元格滚出表格。此外滚动还会让新单元格滑到光标下并补发
+ * mouseenter，令浮层「收起→重开」反复竞速——既跳出边缘，又会
+ * 残留拦截指针的僵尸浮层。守卫在滚动时收起浮层并锁定悬停，
+ * 直到鼠标真正移动才恢复，详见 useScrollSafeTooltip；
  * 与 `ProgressPanel` 的处理保持一致。
  */
-const openTooltip = ref<string | null>(null)
+const {
+  openKey: openTooltip,
+  closeOnScroll,
+  unlockHover,
+  enter: enterTooltip,
+  leave: leaveTooltip,
+} = useScrollSafeTooltip()
 
 /**
  * 生成「悬停即显示该 tooltip」的触发器事件属性。
@@ -58,10 +68,10 @@ const openTooltip = ref<string | null>(null)
 function tooltipTriggerProps(key: string) {
   return {
     onMouseenter: () => {
-      openTooltip.value = key
+      enterTooltip(key)
     },
     onMouseleave: () => {
-      openTooltip.value = null
+      leaveTooltip()
     },
   }
 }
@@ -596,10 +606,16 @@ const FILTER_OPTIONS = [
     <!-- ---- 表格 ---- -->
     <!--
       @scroll.capture：scroll 事件不冒泡，但捕获阶段能截到后代
-      （NDataTable 内部滚动容器）的滚动。滚动时立即收起浮层，
-      避免其滚出表格；原因见脚本中 openTooltip 的注释。
+      （NDataTable 内部滚动容器）的滚动。滚动时经浮层守卫收起浮层
+      并锁定悬停（滚动补发的 mouseenter 不会立刻重开浮层），
+      避免其滚出表格或残留僵尸浮层；机制见脚本中 openTooltip 的注释。
+      @mousemove：真实的鼠标移动解锁悬停。
     -->
-    <div class="min-h-0 flex-1" @scroll.capture="openTooltip = null">
+    <div
+      class="min-h-0 flex-1"
+      @scroll.capture="closeOnScroll"
+      @mousemove="unlockHover"
+    >
       <NEmpty
         v-if="probe.store.models.length === 0"
         description="暂无探测结果"

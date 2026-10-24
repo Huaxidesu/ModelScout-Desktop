@@ -13,6 +13,7 @@ import { NAlert, NButton, NEmpty, useDialog, useMessage } from 'naive-ui'
 
 import { subscribeKeyButler } from '@/api/events'
 import { ProbeApiError } from '@/api/commands'
+import { provideListTooltip } from '@/composables/useScrollSafeTooltip'
 import { useKeyButlerStore } from '@/stores/keyButler'
 import type { KeyEntry } from '@/types/contracts'
 
@@ -134,6 +135,13 @@ const summaryText = computed(() => {
   if (unchecked > 0) parts.push(`未检测 ${unchecked}`)
   return parts.join(' · ')
 })
+
+/**
+ * 列表行状态 tooltip 的浮层守卫：绑定列表滚动（收起浮层并锁定悬停，
+ * 防止浮层滚出列表边缘或反复重开竞速），经 provide 注入 KeyRow。
+ * 详见 useScrollSafeTooltip。
+ */
+const rowTooltips = provideListTooltip()
 </script>
 
 <template>
@@ -176,7 +184,15 @@ const summaryText = computed(() => {
     </NAlert>
 
     <!-- 列表 -->
-    <div class="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+    <!--
+      @scroll / @mousemove：滚动时收起行 tooltip 并锁定悬停，
+      鼠标真正移动后才恢复；机制见脚本中 rowTooltips 的注释。
+    -->
+    <div
+      class="min-h-0 flex-1 overflow-y-auto px-3 py-2"
+      @scroll="rowTooltips.closeOnScroll"
+      @mousemove="rowTooltips.unlockHover"
+    >
       <!-- 空态 -->
       <div
         v-if="store.entries.length === 0 && !store.loading"

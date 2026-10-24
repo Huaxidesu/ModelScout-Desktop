@@ -13,6 +13,7 @@ import { NTag, NTooltip, NEmpty } from 'naive-ui'
 
 import { useProbe } from '@/composables/useProbe'
 import { formatTokens } from '@/composables/useProbe'
+import { useScrollSafeTooltip } from '@/composables/useScrollSafeTooltip'
 import type { ModelInfo, ProbeStage } from '@/types/contracts'
 
 const props = defineProps<{
@@ -23,13 +24,22 @@ const props = defineProps<{
 const autoScroll = ref(true)
 
 /**
- * 当前显示能力摘要 tooltip 的模型 id；`null` 表示没有。
+ * 模型行能力摘要的浮层守卫。
  *
  * 手动控制显隐而非 trigger="hover" 的原因：模型列表可滚动，
  * 而 Naive 的浮层 teleport 到 body 按坐标定位，滚动过程中浮层
- * 会跟着内容滚出列表容器。改为手动控制后，列表一滚动就立刻收起。
+ * 会跟着行滚出列表容器。此外滚动会让新行滑到光标下并补发
+ * mouseenter，令浮层「收起→重开」反复竞速，既会跳出面板边缘，
+ * 又会残留透明但拦截指针的僵尸浮层（详见 useScrollSafeTooltip）。
+ * 守卫在滚动时收起浮层并锁定悬停，直到鼠标真正移动才恢复。
  */
-const tooltipModelId = ref<string | null>(null)
+const {
+  openKey: tooltipModelId,
+  closeOnScroll,
+  unlockHover,
+  enter: enterTooltip,
+  leave: leaveTooltip,
+} = useScrollSafeTooltip()
 
 /** 日志容器的 DOM 引用 */
 const logContainer = ref<HTMLElement | null>(null)
@@ -117,8 +127,8 @@ watch(
 
 /** 用户滚动时更新自动滚动开关 */
 function handleScroll(): void {
-  // 日志区滚动时同样收起模型行的浮层，避免它滞留在屏幕上
-  tooltipModelId.value = null
+  // 日志区滚动时同样收起模型行的浮层并锁定悬停，机制见浮层守卫注释
+  closeOnScroll()
 
   const el = logContainer.value
   if (!el) return
@@ -140,7 +150,10 @@ function summarizeModel(model: ModelInfo): string {
 </script>
 
 <template>
-  <aside class="ms-panel flex min-h-0 flex-col overflow-hidden">
+  <aside
+    class="ms-panel flex min-h-0 flex-col overflow-hidden"
+    @mousemove="unlockHover"
+  >
     <!-- ---- 头部统计 ---- -->
     <div class="border-b border-ms-border px-3 py-2.5">
       <div class="flex items-center justify-between">
@@ -178,12 +191,13 @@ function summarizeModel(model: ModelInfo): string {
 
     <!-- ---------- 模型阶段列表 ---------- -->
     <!--
-      @scroll 里清空 tooltipModelId：滚动时立即收起浮层。
-      这是「悬浮窗滚出窗格」这个缺陷的修复点，详见脚本里的注释。
+      @scroll 经浮层守卫收起浮层并锁定悬停：滚动补发的 mouseenter
+      不含 mousemove，被锁挡住，浮层不会在滚动中反复重开、跳出面板
+      边缘或残留僵尸浮层。机制详见脚本里的浮层守卫注释。
     -->
     <div
       class="max-h-[42%] shrink-0 overflow-y-auto border-b border-ms-border px-3 py-2"
-      @scroll="tooltipModelId = null"
+      @scroll="closeOnScroll"
     >
       <!-- 空态 -->
       <div
@@ -218,8 +232,8 @@ function summarizeModel(model: ModelInfo): string {
         <template #trigger>
           <div
             class="ms-fade-in flex cursor-help items-center justify-between gap-2 py-1"
-            @mouseenter="tooltipModelId = model.id"
-            @mouseleave="tooltipModelId = null"
+            @mouseenter="enterTooltip(model.id)"
+            @mouseleave="leaveTooltip()"
           >
             <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-ms-text">
               {{ model.id }}
