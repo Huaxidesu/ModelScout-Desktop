@@ -450,9 +450,7 @@ function close(): void {
               >
                 <span
                   class="w-10 shrink-0 select-none px-2 text-right leading-5"
-                  :style="row.type === 'del'
-                    ? 'color: rgba(252, 165, 165, 0.8)'
-                    : 'color: var(--color-ms-text-faint); opacity: 0.5'"
+                  :class="row.type === 'del' ? 'ms-diff-del-no' : 'ms-diff-no'"
                 >{{ row.leftNo ?? '' }}</span>
                 <span
                   class="whitespace-pre px-2 leading-5"
@@ -470,9 +468,7 @@ function close(): void {
               >
                 <span
                   class="w-10 shrink-0 select-none px-2 text-right leading-5"
-                  :style="row.type === 'add'
-                    ? 'color: rgba(110, 231, 183, 0.8)'
-                    : 'color: var(--color-ms-text-faint); opacity: 0.5'"
+                  :class="row.type === 'add' ? 'ms-diff-add-no' : 'ms-diff-no'"
                 >{{ row.rightNo ?? '' }}</span>
                 <span
                   class="whitespace-pre px-2 leading-5"
@@ -488,8 +484,8 @@ function close(): void {
       <div class="flex shrink-0 items-center justify-between gap-3 border-t border-ms-border pt-2">
         <div class="text-[11px] text-ms-text-faint">
           <template v-if="diffRows.length > 0">
-            对比：{{ stats.total }} 行 · <span style="color: #34d399">+{{ stats.added }}</span>
-            · <span style="color: #f87171">-{{ stats.removed }}</span>
+            对比：{{ stats.total }} 行 · <span class="ms-diff-stat-add">+{{ stats.added }}</span>
+            · <span class="ms-diff-stat-del">-{{ stats.removed }}</span>
           </template>
           <template v-else-if="!loading && !fatal">没有可展示的内容</template>
         </div>
@@ -541,24 +537,5 @@ function close(): void {
   line-height: 1.5;
 }
 
-.ms-code :deep(.tok-comment) {
-  color: #5c6b82;
-  font-style: italic;
-}
-
-.ms-code :deep(.tok-key) {
-  color: #7dd3fc;
-}
-
-.ms-code :deep(.tok-string) {
-  color: #86efac;
-}
-
-.ms-code :deep(.tok-number) {
-  color: #fcd34d;
-}
-
-.ms-code :deep(.tok-bool) {
-  color: #c4b5fd;
-}
+/* 语法高亮配色见 style.css（随主题明暗切换） */
 </style>

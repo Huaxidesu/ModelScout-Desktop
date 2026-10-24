@@ -9,10 +9,11 @@
  * 不再需要 tailwind.config.js。
  *
  * 【主题策略】
- * 应用整体锁定暗色（tauri.conf.json 中 window.theme = "Dark"），
- * 因此这里定义了一套深色基底 + 青绿强调色的 CSS 变量，
- * 并由 App.vue 把这些变量映射给 Naive UI 的 themeOverrides，
- * 保证 Naive UI 组件与自定义元素视觉一致。
+ * 这里是「默认(青绿暗色)」主题的设计令牌;设置页可切换 浅色 / 深色 /
+ * GitHub / 自定义(stores/theme.ts),切换时把这些 CSS 变量整体覆写到
+ * <html> 上,Tailwind 的 ms-* 工具类与本文件里的 var() 引用全部跟随;
+ * App.vue 再用同一份颜色构建 Naive UI 的 themeOverrides,保证组件与
+ * 自定义元素视觉一致。
  * ============================================================================
  */
 
@@ -28,8 +29,10 @@
   --color-ms-panel: #111721;
   --color-ms-panel-2: #161d29;
   --color-ms-elevated: #1c2433;
+  --color-ms-input-bg: #0d131d;
   --color-ms-border: #232c3d;
   --color-ms-border-strong: #2e3a4f;
+  --color-ms-border-hover: #3d4b63;
 
   /* 文字层级 */
   --color-ms-text: #d6deeb;
@@ -38,6 +41,7 @@
 
   /* 品牌与语义色 */
   --color-ms-accent: #14b8a6;
+  --color-ms-accent-hover: #2dd4bf;
   --color-ms-accent-dim: #0d9488;
   --color-ms-accent-glow: rgba(20, 184, 166, 0.15);
   --color-ms-success: #22c55e;
@@ -106,7 +110,7 @@ body {
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: #3d4b63;
+  background-color: var(--color-ms-border-hover);
 }
 
 *::-webkit-scrollbar-corner {
@@ -119,7 +123,7 @@ body {
 
 ::selection {
   background-color: var(--color-ms-accent-glow);
-  color: #ffffff;
+  color: var(--color-ms-text);
 }
 
 /* ---------------------------------------------------------------------------
@@ -148,6 +152,62 @@ body {
   font-size: 0.75rem;
   line-height: 1.65;
   tab-size: 2;
+}
+
+/* ---------------------------------------------------------------------------
+ * 语法高亮配色（ConfigPreview / QuickFillDialog 共用）
+ *
+ * 用 light-dark(亮色值, 暗色值) 随 :root 的 color-scheme 切换:
+ * 暗色沿用发布版的浅粉浅绿浅黄,亮色换成对应的深色调保证白底可读。
+ * ------------------------------------------------------------------------- */
+
+.ms-code .tok-comment {
+  color: light-dark(#64748b, #5c6b82);
+  font-style: italic;
+}
+
+.ms-code .tok-key {
+  color: light-dark(#0e7490, #7dd3fc);
+}
+
+.ms-code .tok-string {
+  color: light-dark(#15803d, #86efac);
+}
+
+.ms-code .tok-number {
+  color: light-dark(#b45309, #fcd34d);
+}
+
+.ms-code .tok-bool {
+  color: light-dark(#6d28d9, #c4b5fd);
+}
+
+/* ---------------------------------------------------------------------------
+ * 一键填写对比视图的行号与统计色
+ *
+ * 差异行背景是固定的红/绿低透明度(两种底色上都成立),行号与统计文字
+ * 用 light-dark() 切深浅,保证浅色主题下的对比度。
+ * ------------------------------------------------------------------------- */
+
+.ms-diff-no {
+  color: var(--color-ms-text-faint);
+  opacity: 0.5;
+}
+
+.ms-diff-del-no {
+  color: light-dark(#b91c1c, rgba(252, 165, 165, 0.8));
+}
+
+.ms-diff-add-no {
+  color: light-dark(#047857, rgba(110, 231, 183, 0.8));
+}
+
+.ms-diff-stat-add {
+  color: light-dark(#15803d, #34d399);
+}
+
+.ms-diff-stat-del {
+  color: light-dark(#b91c1c, #f87171);
 }
 
 /* 扫描线动效背景：让「探测中」有科技感 */

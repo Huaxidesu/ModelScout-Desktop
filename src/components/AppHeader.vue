@@ -41,17 +41,17 @@ const statusMeta = computed(() => {
   const status = props.status
   switch (status) {
     case 'running':
-      return { color: '#14b8a6', label: '运行中', pulse: true }
+      return { color: 'var(--color-ms-accent)', label: '运行中', pulse: true }
     case 'cancelling':
-      return { color: '#f59e0b', label: '正在中止', pulse: true }
+      return { color: 'var(--color-ms-warning)', label: '正在中止', pulse: true }
     case 'done':
-      return { color: '#22c55e', label: '已完成', pulse: false }
+      return { color: 'var(--color-ms-success)', label: '已完成', pulse: false }
     case 'cancelled':
-      return { color: '#8b98ad', label: '已中止', pulse: false }
+      return { color: 'var(--color-ms-text-dim)', label: '已中止', pulse: false }
     case 'failed':
-      return { color: '#ef4444', label: '失败', pulse: false }
+      return { color: 'var(--color-ms-danger)', label: '失败', pulse: false }
     default:
-      return { color: '#5c6b82', label: '空闲', pulse: false }
+      return { color: 'var(--color-ms-text-faint)', label: '空闲', pulse: false }
   }
 })
 
@@ -63,6 +63,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** 打开「关于」弹窗（由 App.vue 监听） */
   (e: 'open-about'): void
+  /** 打开「设置」弹窗（主题切换等，由 App.vue 监听） */
+  (e: 'open-settings'): void
 }>()
 </script>
 
@@ -109,6 +111,27 @@ const emit = defineEmits<{
         />
         <span class="text-[11px] text-ms-text-dim">{{ statusMeta.label }}</span>
       </div>
+
+      <!-- 设置入口（主题切换等） -->
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <button
+            class="flex h-7 w-7 items-center justify-center rounded-md text-ms-text-dim transition-colors hover:bg-ms-accent/15 hover:text-ms-accent"
+            aria-label="设置"
+            @click="emit('open-settings')"
+          >
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true">
+              <path
+                d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zm0 5.092a1.846 1.846 0 1 1 0-3.692 1.846 1.846 0 0 1 0 3.692z"
+              />
+              <path
+                d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.421-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094a1.873 1.873 0 0 0 1.115-2.692l-.16-.292c-.415-.764.42-1.601 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.116l.094-.318z"
+              />
+            </svg>
+          </button>
+        </template>
+        设置（主题切换）
+      </NTooltip>
 
       <!-- 关于入口 -->
       <NTooltip trigger="hover">

@@ -18,6 +18,7 @@ import { NDrawer, NDrawerContent, NEmpty, NTag } from 'naive-ui'
 
 import type { KeyEntry, Snapshot } from '@/types/contracts'
 import { useKeyButlerStore } from '@/stores/keyButler'
+import { useThemeStore } from '@/stores/theme'
 import { ProbeApiError } from '@/api/commands'
 
 const props = defineProps<{
@@ -27,6 +28,9 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'update:show', value: boolean): void }>()
 
 const store = useKeyButlerStore()
+
+/** 主题令牌:canvas 图表拿不到 CSS 变量,取已解析的令牌值(抽屉打开时读取) */
+const theme = useThemeStore()
 
 const snapshots = ref<Snapshot[]>([])
 const loading = ref(false)
@@ -95,13 +99,13 @@ async function buildChart(): Promise<void> {
         {
           label: '余额',
           data: points.map((item) => item.balance as number),
-          borderColor: '#14b8a6',
-          backgroundColor: 'rgba(20, 184, 166, 0.15)',
+          borderColor: theme.colors.accent,
+          backgroundColor: theme.colors.accentGlow,
           fill: true,
           tension: 0.25,
           // 单点时没有线段可画，把点放大一点，至少能看见
           pointRadius: points.length === 1 ? 5 : 3,
-          pointBackgroundColor: '#14b8a6',
+          pointBackgroundColor: theme.colors.accent,
         },
       ],
     },
@@ -114,12 +118,12 @@ async function buildChart(): Promise<void> {
       },
       scales: {
         x: {
-          ticks: { color: '#8b98ad', maxRotation: 0, autoSkipPadding: 12, font: { size: 10 } },
-          grid: { color: 'rgba(35, 44, 61, 0.6)' },
+          ticks: { color: theme.colors.textDim, maxRotation: 0, autoSkipPadding: 12, font: { size: 10 } },
+          grid: { color: theme.colors.border },
         },
         y: {
-          ticks: { color: '#8b98ad', font: { size: 10 } },
-          grid: { color: 'rgba(35, 44, 61, 0.6)' },
+          ticks: { color: theme.colors.textDim, font: { size: 10 } },
+          grid: { color: theme.colors.border },
         },
       },
     },

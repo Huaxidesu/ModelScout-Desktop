@@ -121,8 +121,8 @@ const ERROR_ADVICE: Record<string, string> = {
           :show-indicator="false"
           :height="6"
           :border-radius="3"
-          :color="running ? '#14b8a6' : '#22c55e'"
-          rail-color="#1c2433"
+          :color="running ? 'var(--color-ms-accent)' : 'var(--color-ms-success)'"
+          rail-color="var(--color-ms-elevated)"
         />
       </div>
 

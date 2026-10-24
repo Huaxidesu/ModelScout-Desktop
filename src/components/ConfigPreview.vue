@@ -995,25 +995,5 @@ watch(
 </template>
 
 <style scoped>
-/* 简易语法高亮配色：与整体暗色极客风一致 */
-.ms-code :deep(.tok-comment) {
-  color: #5c6b82;
-  font-style: italic;
-}
-
-.ms-code :deep(.tok-key) {
-  color: #7dd3fc;
-}
-
-.ms-code :deep(.tok-string) {
-  color: #86efac;
-}
-
-.ms-code :deep(.tok-number) {
-  color: #fcd34d;
-}
-
-.ms-code :deep(.tok-bool) {
-  color: #c4b5fd;
-}
+/* 语法高亮配色见 style.css 的 .ms-code .tok-*（随主题明暗切换） */
 </style>

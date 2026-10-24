@@ -1,8 +1,12 @@
 <script setup lang="ts">
 /**
- * 根组件：装配全局主题（Naive UI 暗色 + themeOverrides）、消息/对话框 Provider，
+ * 根组件：装配全局主题（Naive UI 明/暗 + themeOverrides）、消息/对话框 Provider，
  * 以及整体布局骨架（顶栏 / Tab / 输入区 / 控制条 / 进度与结果 / 配置预览）。
  * 挂载时建立事件订阅，卸载时释放。
+ *
+ * 主题：设置页可切换 默认 / 浅色 / 深色 / GitHub / 自定义（stores/theme.ts
+ * 负责 CSS 变量与持久化）；这里按当前颜色的明暗给 Naive UI 配 darkTheme
+ * 或亮色（null），并用同一份颜色构建 themeOverrides。
  *
  * 布局策略：整页固定高度，各区域独立滚动，保证长时间探测时界面稳定，
  * 日志区不会将其他区域顶出屏幕。
@@ -17,11 +21,11 @@ import {
   darkTheme,
   zhCN,
   dateZhCN,
-  type GlobalThemeOverrides,
 } from 'naive-ui'
 
 import AppHeader from '@/components/AppHeader.vue'
 import AboutDialog from '@/components/AboutDialog.vue'
+import SettingsDialog from '@/components/SettingsDialog.vue'
 import ConnectionForm from '@/components/ConnectionForm.vue'
 import ProbeControl from '@/components/ProbeControl.vue'
 import ProgressPanel from '@/components/ProgressPanel.vue'
@@ -31,91 +35,19 @@ import KeyButlerView from '@/views/keyButler/KeyButlerView.vue'
 import ConfigManagerView from '@/views/configManager/ConfigManagerView.vue'
 import { useProbe } from '@/composables/useProbe'
 import { useKeyButlerStore } from '@/stores/keyButler'
+import { useThemeStore } from '@/stores/theme'
+import { buildNaiveThemeOverrides } from '@/theme/naive'
 import { keyButlerRecordProbe } from '@/api/commands'
 import type { KeyEntry } from '@/types/contracts'
 
-// ---- 主题覆盖：把 style.css 设计令牌映射到 Naive UI themeOverrides，统一视觉 ----
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    // 品牌色：青绿
-    primaryColor: '#14b8a6',
-    primaryColorHover: '#2dd4bf',
-    primaryColorPressed: '#0d9488',
-    primaryColorSuppl: '#14b8a6',
+// ---- 主题：设置页切换,这里按当前颜色构建 Naive UI 覆盖 ----
+const theme = useThemeStore()
 
-    // 语义色
-    successColor: '#22c55e',
-    warningColor: '#f59e0b',
-    errorColor: '#ef4444',
-    infoColor: '#3b82f6',
+/** themeOverrides 随主题颜色实时重建(切换即时生效) */
+const themeOverrides = computed(() => buildNaiveThemeOverrides(theme.colors))
 
-    // 背景层级
-    bodyColor: '#0a0e14',
-    cardColor: '#111721',
-    modalColor: '#161d29',
-    popoverColor: '#161d29',
-    tableColor: 'transparent',
-
-    // 边框
-    borderColor: '#232c3d',
-    dividerColor: '#232c3d',
-
-    // 文字
-    textColorBase: '#d6deeb',
-    textColor1: '#d6deeb',
-    textColor2: '#b4c0d3',
-    textColor3: '#8b98ad',
-    placeholderColor: '#5c6b82',
-
-    // 圆角与字号
-    borderRadius: '6px',
-    borderRadiusSmall: '4px',
-    fontSize: '13px',
-    fontFamily:
-      "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
-    fontFamilyMono:
-      "'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace",
-  },
-  Card: {
-    color: '#111721',
-    borderColor: '#232c3d',
-    paddingMedium: '14px 16px',
-  },
-  DataTable: {
-    thColor: '#161d29',
-    thTextColor: '#8b98ad',
-    tdColor: 'transparent',
-    tdColorHover: '#161d29',
-    borderColor: '#232c3d',
-    thFontWeight: '600',
-  },
-  Progress: {
-    railColor: '#1c2433',
-    fillColor: '#14b8a6',
-    textColorLineInner: '#0a0e14',
-  },
-  Tag: {
-    borderRadius: '4px',
-  },
-  Input: {
-    color: '#0d131d',
-    colorFocus: '#0d131d',
-    border: '1px solid #2e3a4f',
-    borderFocus: '1px solid #14b8a6',
-    borderHover: '1px solid #3d4b63',
-  },
-  Tabs: {
-    tabColor: 'transparent',
-    tabTextColor: '#8b98ad',
-    tabTextColorActiveLine: '#14b8a6',
-    tabTextColorHoverLine: '#2dd4bf',
-    barColor: '#14b8a6',
-  },
-  Log: {
-    color: '#0d131d',
-    borderColor: '#232c3d',
-  },
-}
+/** Naive UI 明暗:暗色主题用 darkTheme,亮色主题用 null(默认亮色) */
+const naiveTheme = computed(() => (theme.scheme === 'dark' ? darkTheme : null))
 
 // ---- 页面布局状态 ----
 
@@ -124,6 +56,9 @@ const showConfig = ref(false)
 
 /** 「关于」弹窗是否显示（由 AppHeader 的入口触发） */
 const showAbout = ref(false)
+
+/** 「设置」弹窗是否显示（AppHeader 齿轮入口,主题切换等） */
+const showSettings = ref(false)
 
 // ---- 顶部 Tab：探测 / 配置管理 / Key 管家（Beta） ----
 // 用 v-show 而非 v-if 切换：v-if 会在每次切 Tab 时整体卸载重建探测页组件，
@@ -273,7 +208,7 @@ const statusLabel = computed(
 
 <template>
   <NConfigProvider
-    :theme="darkTheme"
+    :theme="naiveTheme"
     :theme-overrides="themeOverrides"
     :locale="zhCN"
     :date-locale="dateZhCN"
@@ -286,6 +221,7 @@ const statusLabel = computed(
             class="shrink-0"
             :status="probe.store.status"
             @open-about="showAbout = true"
+            @open-settings="showSettings = true"
           />
 
           <!-- ---- 页面 Tab ---- -->
@@ -422,7 +358,7 @@ const statusLabel = computed(
           <div
             v-if="configMaximized"
             class="fixed inset-0 z-50 flex flex-col p-3"
-            style="background-color: rgba(10, 14, 20, 0.92)"
+            style="background-color: color-mix(in srgb, var(--color-ms-bg) 92%, transparent)"
           >
             <ConfigPreview
               class="min-h-0 flex-1"
@@ -438,8 +374,9 @@ const statusLabel = computed(
           </div>
         </Teleport>
 
-        <!-- ---- 关于弹窗 ---- -->
+        <!-- ---- 关于 / 设置弹窗 ---- -->
         <AboutDialog v-model:show="showAbout" />
+        <SettingsDialog v-model:show="showSettings" />
       </NDialogProvider>
     </NMessageProvider>
   </NConfigProvider>
