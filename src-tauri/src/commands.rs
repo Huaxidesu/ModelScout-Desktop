@@ -20,7 +20,7 @@ use crate::dictionary;
 use crate::error::{CommandError, ProbeError, ProbeErrorKind};
 use crate::models::{
     ProbeConfig, ProbeRunSummary, ProbeSnapshot, ProbeStage, ProbeStatus, SaveConfigRequest,
-    SaveConfigResult, PingResult,
+    SaveConfigResult, PingResult, ToolConfigFile, ToolConfigWriteResult,
 };
 use crate::probe::{
     self, ApiClient, EngineOptions, RunState,
@@ -471,12 +471,249 @@ pub async fn get_dictionary_info() -> Result<Value, CommandError> {
     }))
 }
 
+// ---- inspect_tool_config / write_tool_config：一键填写 ----
+
+/// 一键填写读取的配置文件大小上限（1 MiB）。
+///
+/// opencode / dsh 的配置都是几十 KB 级；超限说明这个路径指向的多半不是
+/// 预期的配置文件，读进来也无法在 WebView 里高效渲染。
+const TOOL_CONFIG_MAX_BYTES: u64 = 1024 * 1024;
+
+/// 允许一键填写写入的扩展名白名单。
+const TOOL_CONFIG_EXTENSIONS: [&str; 5] = ["json", "jsonc", "yml", "yaml", "toml"];
+
+/// 解析用户主目录（Windows 用 USERPROFILE，其余用 HOME）。
+fn resolve_home_dir() -> Result<PathBuf, CommandError> {
+    let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(key)
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| CommandError::internal("无法确定用户主目录（环境变量缺失）。".to_string()))
+}
+
+/// 展开路径开头的 `~` 与 `~\` / `~/`。
+fn expand_tilde(raw: &str, home: &std::path::Path) -> PathBuf {
+    let trimmed = raw.trim();
+    if trimmed == "~" {
+        return home.to_path_buf();
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+        return home.join(rest);
+    }
+    PathBuf::from(trimmed)
+}
+
+/// opencode 的默认配置路径（`~/.config/opencode/opencode.json`）。
+///
+/// opencode 全平台都以 `~/.config` 为根（官方文档只给出这一条路径），
+/// 设置了 `XDG_CONFIG_HOME` 时优先采用。已存在 `opencode.jsonc` 而没有
+/// `opencode.json` 时跟随用户的实际选择；都不存在时默认创建 `.json`。
+fn default_opencode_config_path(home: &std::path::Path) -> PathBuf {
+    let config_root = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home.join(".config"));
+    let dir = config_root.join("opencode");
+    let json = dir.join("opencode.json");
+    if json.exists() {
+        return json;
+    }
+    let jsonc = dir.join("opencode.jsonc");
+    if jsonc.exists() {
+        return jsonc;
+    }
+    json
+}
+
+/// DeepSeek Harness（dsh）补丁文件的默认路径。
+///
+/// 规则（依据 dsh 官方文档与 dsh-home-paths 解析器）：
+///   - 根目录：`$DSH_HOME`（设了且非空就用）否则 `~/.dsh`；
+///   - 文件：`<根>/profiles/<profile>/cordis.patch.yml`；
+///   - profile 探测：profiles 目录下已有补丁文件的 profile 里优先 `web`
+///     （`dsh web` 标准启动的 profile 名），否则取字母序第一个；
+///   - 都没有：按 `web` 创建。
+fn default_dsh_patch_path(home: &std::path::Path) -> PathBuf {
+    let root = std::env::var_os("DSH_HOME")
+        .map(|v| PathBuf::from(v.to_string_lossy().to_string()))
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| expand_tilde(&p.to_string_lossy(), home))
+        .unwrap_or_else(|| home.join(".dsh"));
+
+    let profiles = root.join("profiles");
+    let patch_name = "cordis.patch.yml";
+
+    if let Ok(entries) = std::fs::read_dir(&profiles) {
+        let mut names: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().join(patch_name).is_file())
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .collect();
+        if !names.is_empty() {
+            names.sort();
+            names.sort_by_key(|n| (*n != "web") as u8); // web 稳定排到最前
+            return profiles.join(&names[0]).join(patch_name);
+        }
+    }
+    profiles.join("web").join(patch_name)
+}
+
+/// 把 `tool` 名解析成默认路径。
+fn default_tool_config_path(tool: &str, home: &std::path::Path) -> Result<PathBuf, CommandError> {
+    match tool {
+        "opencode" => Ok(default_opencode_config_path(home)),
+        "dsh" => Ok(default_dsh_patch_path(home)),
+        other => Err(CommandError::invalid_input(format!(
+            "未知的目标工具：{other}（支持 opencode / dsh）"
+        ))),
+    }
+}
+
+/// 读取目标工具的配置文件，供「一键填写」生成左右对比预览。
+///
+/// - `tool`：`opencode` / `dsh`，决定默认路径；
+/// - `custom_path`：用户在界面里改过的路径（支持 `~`），优先生效。
+///
+/// 文件不存在**不是错误**：`exists=false` + 空 content 返回，前端据此走
+///「空文件补全」分支。
+#[tauri::command]
+pub async fn inspect_tool_config(
+    tool: String,
+    custom_path: Option<String>,
+) -> Result<ToolConfigFile, CommandError> {
+    let home = resolve_home_dir()?;
+
+    let path = match custom_path {
+        Some(raw) if !raw.trim().is_empty() => {
+            let expanded = expand_tilde(&raw, &home);
+            // 相对路径以当前工作目录补全，保证返回给前端的是绝对路径
+            if expanded.is_absolute() {
+                expanded
+            } else {
+                std::env::current_dir()
+                    .map_err(|err| CommandError::internal(format!("无法获取工作目录：{err}")))?
+                    .join(expanded)
+            }
+        }
+        _ => default_tool_config_path(&tool, &home)?,
+    };
+
+    if !path.exists() {
+        return Ok(ToolConfigFile {
+            path: path.to_string_lossy().to_string(),
+            exists: false,
+            content: String::new(),
+        });
+    }
+    if !path.is_file() {
+        return Err(CommandError::invalid_input(format!(
+            "目标路径不是文件：{}",
+            path.display()
+        )));
+    }
+
+    let size = std::fs::metadata(&path)
+        .map_err(|err| CommandError::internal(format!("读取文件信息失败：{err}")))?
+        .len();
+    if size > TOOL_CONFIG_MAX_BYTES {
+        return Err(CommandError::invalid_input(format!(
+            "文件超过 1 MiB（{} 字节），不像一份配置文件；请检查路径。",
+            size
+        )));
+    }
+
+    let content = std::fs::read_to_string(&path).map_err(|err| {
+        CommandError::internal(format!(
+            "读取 {} 失败：{err}（文件必须是 UTF-8 文本）",
+            path.display()
+        ))
+    })?;
+
+    Ok(ToolConfigFile {
+        path: path.to_string_lossy().to_string(),
+        exists: true,
+        content,
+    })
+}
+
+/// 把「一键填写」确认后的内容写入目标配置文件。
+///
+/// 安全约束：
+///   - 路径必须解析为绝对路径，且扩展名在白名单内（防误写任意文件）；
+///   - 覆盖已有文件前创建 `<原名>.modelscout.bak` 备份（可经 `backup`
+///     关闭，备份文件本身会被同名覆盖，不累积）。
+#[tauri::command]
+pub async fn write_tool_config(
+    path: String,
+    content: String,
+    backup: bool,
+) -> Result<ToolConfigWriteResult, CommandError> {
+    let home = resolve_home_dir()?;
+    let expanded = expand_tilde(&path, &home);
+    let path = if expanded.is_absolute() {
+        expanded
+    } else {
+        std::env::current_dir()
+            .map_err(|err| CommandError::internal(format!("无法获取工作目录：{err}")))?
+            .join(expanded)
+    };
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if !TOOL_CONFIG_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(CommandError::invalid_input(format!(
+            "目标文件的扩展名必须是 {} 之一：{}",
+            TOOL_CONFIG_EXTENSIONS.join(" / "),
+            path.display()
+        )));
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| CommandError::internal(format!("无法创建目录 {}: {err}", parent.display())))?;
+    }
+
+    // 覆盖前备份（仅当文件已存在）
+    let mut backup_path: Option<String> = None;
+    if backup && path.is_file() {
+        let bak = path.with_extension(format!(
+            "{}.modelscout.bak",
+            path.extension().and_then(|e| e.to_str()).unwrap_or("")
+        ));
+        std::fs::copy(&path, &bak).map_err(|err| {
+            CommandError::internal(format!("创建备份失败：{err}"))
+        })?;
+        backup_path = Some(bak.to_string_lossy().to_string());
+    }
+
+    let bytes = content.len() as u64;
+    std::fs::write(&path, content.as_bytes())
+        .map_err(|err| CommandError::internal(format!("写入 {} 失败：{err}", path.display())))?;
+
+    eprintln!(
+        "[ModelScout] 一键填写已写入：{}（{} 字节，备份：{}）",
+        path.display(),
+        bytes,
+        backup_path.as_deref().unwrap_or("无")
+    );
+
+    Ok(ToolConfigWriteResult {
+        path: path.to_string_lossy().to_string(),
+        backup_path,
+        bytes_written: bytes,
+    })
+}
+
 // ---- 单元测试（仅覆盖不依赖 Tauri 运行时的纯逻辑） ----
 
 #[cfg(test)]
 mod tests {
-    use super::ping_failure;
+    use super::{default_dsh_patch_path, default_opencode_config_path, expand_tilde, ping_failure};
     use crate::models::{ApiKeySource, ProbeConfig};
+    use std::path::{Path, PathBuf};
 
     /// 构造一份「明文模式」的测试配置，避免每处字面量都重复三个来源字段。
     fn plain_config(base_url: &str, api_key: &str) -> ProbeConfig {
@@ -535,5 +772,99 @@ mod tests {
         assert!(sanitize("dir/file.json").is_err());
         assert!(sanitize("dir\\file.json").is_err());
         assert!(sanitize("   ").is_err());
+    }
+
+    // ---- 一键填写：路径解析 ----
+
+    #[test]
+    fn tilde_expansion_rules() {
+        let home = Path::new("/home/tester");
+        assert_eq!(expand_tilde("~", home), PathBuf::from("/home/tester"));
+        assert_eq!(expand_tilde("~/.config", home), PathBuf::from("/home/tester/.config"));
+        assert_eq!(expand_tilde("~\\x", home), PathBuf::from("/home/tester/x"));
+        assert_eq!(expand_tilde(" C:/abs/path ", home), PathBuf::from("C:/abs/path"));
+    }
+
+    #[test]
+    fn opencode_default_path_falls_back_to_json() {
+        // XDG_CONFIG_HOME 会影响结果，这里固定住再断言相对结构
+        let tmp = std::env::temp_dir().join("modelscout-test-opencode-default");
+        std::fs::remove_dir_all(&tmp).ok();
+        let dir = tmp.join("opencode");
+        std::fs::create_dir_all(&dir).ok();
+        let _guard = xdg_guard(&tmp);
+
+        let path = default_opencode_config_path(&tmp);
+        assert_eq!(path, dir.join("opencode.json"));
+
+        // 已有 opencode.jsonc 而无 opencode.json 时跟随 jsonc
+        std::fs::write(dir.join("opencode.jsonc"), "{}").ok();
+        let path = default_opencode_config_path(&tmp);
+        assert_eq!(path, dir.join("opencode.jsonc"));
+
+        std::fs::write(dir.join("opencode.json"), "{}").ok();
+        let path = default_opencode_config_path(&tmp);
+        assert_eq!(path, dir.join("opencode.json"));
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn dsh_default_path_prefers_web_profile_then_alpha() {
+        let tmp = std::env::temp_dir().join("modelscout-test-dsh-default");
+        std::fs::remove_dir_all(&tmp).ok();
+        let _guard = dsh_home_guard(&tmp);
+
+        // 没有任何 profile → web 兜底
+        let path = default_dsh_patch_path(&tmp);
+        assert_eq!(path, tmp.join("profiles").join("web").join("cordis.patch.yml"));
+
+        // 有 alpha 和 web 两个 profile → web 优先
+        for name in ["alpha", "web"] {
+            let dir = tmp.join("profiles").join(name);
+            std::fs::create_dir_all(&dir).ok();
+            std::fs::write(dir.join("cordis.patch.yml"), "[]").ok();
+        }
+        let path = default_dsh_patch_path(&tmp);
+        assert!(path.ends_with("profiles\\web\\cordis.patch.yml") || path.ends_with("profiles/web/cordis.patch.yml"));
+
+        // 去掉 web，只剩 alpha → 字母序第一个
+        std::fs::remove_file(tmp.join("profiles").join("web").join("cordis.patch.yml")).ok();
+        let path = default_dsh_patch_path(&tmp);
+        assert!(path.ends_with("profiles\\alpha\\cordis.patch.yml") || path.ends_with("profiles/alpha/cordis.patch.yml"));
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// 临时设置 XDG_CONFIG_HOME 并保证测试结束后还原（环境变量是进程级全局）。
+    fn xdg_guard(dir: &Path) -> EnvRestore {
+        EnvRestore::set("XDG_CONFIG_HOME", dir)
+    }
+
+    /// 临时把 DSH_HOME 指到临时目录。
+    fn dsh_home_guard(dir: &Path) -> EnvRestore {
+        EnvRestore::set("DSH_HOME", dir)
+    }
+
+    struct EnvRestore {
+        key: &'static str,
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl EnvRestore {
+        fn set(key: &'static str, value: &Path) -> Self {
+            let old = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
     }
 }

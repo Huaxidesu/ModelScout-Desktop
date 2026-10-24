@@ -32,6 +32,7 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 
 import { useProbe } from '@/composables/useProbe'
 import { saveConfigFile } from '@/api/commands'
+import QuickFillDialog from '@/components/QuickFillDialog.vue'
 import {
   renderOpenCodeJsonc,
   renderOpenCodeJson,
@@ -44,6 +45,7 @@ import {
   renderHardnessToml,
   FORMAT_ASSUMPTIONS,
 } from '@/generators/deepseekHardness'
+import { renderDshProviderFragmentYml } from '@/generators/dsh'
 import {
   type ApiKeyMode,
   hasApiKey,
@@ -52,6 +54,7 @@ import {
   inferProviderName,
   sanitizeProviderKey,
 } from '@/generators/naming'
+import { highlightLine } from '@/utils/highlight'
 
 import type { ModelInfo } from '@/types/contracts'
 
@@ -72,9 +75,19 @@ const dialog = useDialog()
 /** 当前激活的 Tab */
 const activeTab = ref<'opencode' | 'hardness'>('opencode')
 
-/** 各 Tab 的输出形态 */
-const opencodeFormat = ref<'jsonc' | 'json' | 'fragment'>('jsonc')
-const hardnessFormat = ref<'jsonc' | 'json' | 'toml'>('jsonc')
+/**
+ * 各 Tab 的输出形态。
+ *
+ * OpenCode 默认「片段」：用户绝大多数情况已有一份 opencode.json
+ * （含 mcp / permission 等配置），需要的是把 provider 合并进去而不是
+ * 整份替换；DeepSeekHardness 默认 dsh 的真实格式（YAML 补丁），
+ * JSON/TOML 是早期按公开信息猜测的模板，保留作参考。
+ */
+const opencodeFormat = ref<'jsonc' | 'json' | 'fragment'>('fragment')
+const hardnessFormat = ref<'dshYaml' | 'jsonc' | 'json' | 'toml'>('dshYaml')
+
+/** 一键填写对话框 */
+const quickFillShow = ref(false)
 
 /** 复制按钮的瞬时状态（用于给出视觉反馈） */
 const copied = ref<'opencode' | 'hardness' | null>(null)
@@ -257,6 +270,8 @@ const hardnessText = computed(() => {
       return renderHardnessJson(context.value)
     case 'toml':
       return renderHardnessToml(context.value)
+    case 'dshYaml':
+      return renderDshProviderFragmentYml(context.value)
     default:
       return renderHardnessJsonc(context.value)
   }
@@ -277,10 +292,22 @@ const activeFileName = computed(() => {
       return 'deepseek-hardness.json'
     case 'toml':
       return 'deepseek-hardness.toml'
+    case 'dshYaml':
+      return 'cordis.patch.yml'
     default:
       return FORMAT_ASSUMPTIONS.defaultFileName
   }
 })
+
+/** 一键填写的目标工具（跟随当前 Tab） */
+const quickFillTool = computed<'opencode' | 'dsh'>(() =>
+  activeTab.value === 'opencode' ? 'opencode' : 'dsh',
+)
+
+/** 一键填写成功后的轻提示 */
+function onQuickFillWritten(path: string): void {
+  message.info(`配置已写入 ${path}，目标工具会在下次读取时生效。`, { duration: 5000 })
+}
 
 /** 当前激活 Tab 对应的代码区引用 */
 const activeRef = computed(() =>
@@ -451,44 +478,6 @@ function numberedLines(text: string): Array<{ no: number; content: string }> {
 const opencodeLines = computed(() => numberedLines(opencodeText.value))
 const hardnessLines = computed(() => numberedLines(hardnessText.value))
 
-/** 语法高亮：给简单的 token 着色，提升可读性 */
-function highlight(line: string): string {
-  // 先做 HTML 转义，防止内容里的 < > 破坏结构
-  let escaped = line
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-
-  // 注释（// 或 #）整体着色，且不再处理内部 token
-  const commentMatch = escaped.match(/^(\s*)(\/\/|#)(.*)$/)
-  if (commentMatch) {
-    return `${commentMatch[1]}<span class="tok-comment">${commentMatch[2]}${commentMatch[3]}</span>`
-  }
-
-  // 字符串（双引号）
-  escaped = escaped.replace(
-    /(&quot;|")([^"]*)(&quot;|")/g,
-    '<span class="tok-string">"$2"</span>',
-  )
-  // 键名：以 " 开头且后面紧跟冒号的
-  escaped = escaped.replace(
-    /<span class="tok-string">"([^"]+)"<\/span>(\s*:)/g,
-    '<span class="tok-key">"$1"</span>$2',
-  )
-  // 数字
-  escaped = escaped.replace(
-    /(\s|\[|,|:)(\s*)(\d+(?:\.\d+)?)(\s*)(,|\]|\}|$)/g,
-    '$1$2<span class="tok-number">$3</span>$4$5',
-  )
-  // 布尔与 null
-  escaped = escaped.replace(
-    /\b(true|false|null)\b/g,
-    '<span class="tok-bool">$1</span>',
-  )
-
-  return escaped
-}
-
 // ---- 预览内容变化提示 ----
 
 /**
@@ -528,9 +517,9 @@ watch(
           v-if="activeTab === 'opencode'"
           v-model:value="opencodeFormat"
           :options="[
+            { label: '片段（粘贴进已有配置）', value: 'fragment' },
             { label: 'JSONC（完整配置）', value: 'jsonc' },
             { label: 'JSON（完整·严格）', value: 'json' },
-            { label: '片段（粘贴进已有配置）', value: 'fragment' },
           ]"
           size="tiny"
           style="width: 178px"
@@ -540,14 +529,30 @@ watch(
           v-else
           v-model:value="hardnessFormat"
           :options="[
-            { label: 'JSONC（带注释）', value: 'jsonc' },
-            { label: 'JSON（严格）', value: 'json' },
-            { label: 'TOML', value: 'toml' },
+            { label: 'YAML（dsh 真实格式·片段）', value: 'dshYaml' },
+            { label: 'JSONC（旧模板）', value: 'jsonc' },
+            { label: 'JSON（旧模板·严格）', value: 'json' },
+            { label: 'TOML（旧模板）', value: 'toml' },
           ]"
           size="tiny"
-          style="width: 150px"
+          style="width: 186px"
           :consistent-menu-width="false"
         />
+
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <NButton
+              size="tiny"
+              type="warning"
+              :disabled="context.models.length === 0"
+              @click="quickFillShow = true"
+            >
+              ⚡ 一键填写
+            </NButton>
+          </template>
+          读取本机的 {{ quickFillTool === 'opencode' ? 'opencode.json' : 'dsh cordis.patch.yml' }}，
+          没有配置时直接补全，已有配置时并入片段；确认前会展示左右对比。
+        </NTooltip>
 
         <NButton size="tiny" :loading="exporting" @click="exportActive()">
           导出文件
@@ -695,14 +700,14 @@ watch(
               <span class="mr-3 w-8 shrink-0 select-none text-right text-ms-text-faint opacity-50">
                 {{ line.no }}
               </span>
-              <span class="whitespace-pre" v-html="highlight(line.content)" />
+              <span class="whitespace-pre" v-html="highlightLine(line.content)" />
             </div>
           </div>
         </div>
       </NTabPane>
 
       <!-- ---- DeepSeekHardness ---- -->
-      <NTabPane name="hardness" tab="DeepSeekHardness" class="min-h-0">
+      <NTabPane name="hardness" tab="DeepSeek Harness (dsh)" class="min-h-0">
         <div class="flex h-full flex-col">
           <div class="shrink-0 border-b border-ms-border px-3 py-1 text-[10px] text-ms-text-faint">
             {{ stats.hardnessLines }} 行 · {{ stats.hardnessChars }} 字符 ·
@@ -717,12 +722,20 @@ watch(
               <span class="mr-3 w-8 shrink-0 select-none text-right text-ms-text-faint opacity-50">
                 {{ line.no }}
               </span>
-              <span class="whitespace-pre" v-html="highlight(line.content)" />
+              <span class="whitespace-pre" v-html="highlightLine(line.content)" />
             </div>
           </div>
         </div>
       </NTabPane>
     </NTabs>
+
+    <!-- ---------- 一键填写（左右对比 + 确认写入） ---------- -->
+    <QuickFillDialog
+      v-model:show="quickFillShow"
+      :tool="quickFillTool"
+      :context="context"
+      @written="onQuickFillWritten"
+    />
   </section>
 </template>
 

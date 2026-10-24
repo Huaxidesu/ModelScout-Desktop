@@ -1,7 +1,7 @@
 {
   "name": "modelscout-desktop",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "description": "ModelScout —— 大模型 API 探测与配置生成桌面应用",
   "license": "PolyForm-Noncommercial-1.0.0",
@@ -19,6 +19,7 @@
     "@tauri-apps/plugin-clipboard-manager": "^2.4.1",
     "@tauri-apps/plugin-opener": "^2.5.0",
     "chart.js": "^4.5.1",
+    "js-yaml": "^5.5.0",
     "naive-ui": "^2.45.3",
     "pinia": "^4.0.3",
     "vue": "^3.5.43"

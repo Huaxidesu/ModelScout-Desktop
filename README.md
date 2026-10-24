@@ -4,7 +4,7 @@
   <p>大语言模型 API 能力探测与配置生成工具</p>
 </div>
 
-支持连接 OpenAI 兼容的 API 服务，批量检测模型的工具调用、图片输入、推理能力及 Token 限制，并根据探测结果生成 OpenCode、DeepSeekHardness 配置文件。
+支持连接 OpenAI 兼容的 API 服务，批量检测模型的工具调用、图片输入、推理能力及 Token 限制，并根据探测结果生成 OpenCode、DeepSeek Harness（dsh）配置文件，支持一键写入本机配置（带左右对比预览与自动备份）。
 
 <p align="center">
   <a href="../../releases/latest"><img src="https://img.shields.io/badge/下载-最新版本-14b8a6?style=for-the-badge" alt="下载最新版本"></a>
@@ -26,7 +26,7 @@ ModelScout 是一款大语言模型 API 探测与配置生成工具，适用于�
 
 使用大模型 API 时，不同模型支持的功能和参数限制可能有所不同。例如，部分模型支持图片识别或工具调用，不同模型能够处理的文本长度也存在差异。这些信息通常需要查阅服务商文档或通过实际请求进行确认。
 
-ModelScout 可以自动获取 API 服务中的模型列表，批量检测模型支持的功能及参数限制，并根据检测结果生成 OpenCode、DeepSeekHardness 等工具所需的配置文件，减少手动查询、测试和配置的工作量。
+ModelScout 可以自动获取 API 服务中的模型列表，批量检测模型支持的功能及参数限制，并根据检测结果生成 OpenCode、DeepSeek Harness（dsh）等工具所需的配置文件，减少手动查询、测试和配置的工作量。
 
 主要功能：
 

@@ -151,6 +151,8 @@ pub fn run() {
             commands::get_probe_state,    // 5. 查询实时快照
             commands::save_config_file,   // 6. 导出配置到磁盘
             commands::get_dictionary_info, // 7. 字典自检（辅助）
+            commands::inspect_tool_config, // 8. 一键填写：读取目标工具配置
+            commands::write_tool_config,   // 9. 一键填写：确认后写入目标配置
             // ---- Key 管家（Beta）：15 个命令 ----
             // 函数名必须与前端 COMMAND_NAMES.KEY_BUTLER_* 的字符串值逐字一致
             key_butler::commands::key_butler_import,

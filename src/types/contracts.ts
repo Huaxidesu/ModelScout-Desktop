@@ -346,6 +346,39 @@ export interface SaveConfigResult {
   path: string
 }
 
+/**
+ * `inspect_tool_config` 命令的返回。
+ * 对应 Rust 结构体：`models::ToolConfigFile`
+ *
+ * 「一键填写」用它读取目标工具（OpenCode / dsh）的现有配置文件，
+ * 生成左右对比预览。文件不存在不是错误（`exists=false` + 空内容），
+ * 前端据此走「空文件补全」分支。
+ */
+export interface ToolConfigFile {
+  /** 解析后的目标文件绝对路径（已做 `~` 展开与默认路径推断） */
+  path: string
+  /** 文件是否存在 */
+  exists: boolean
+  /** 文件内容（UTF-8）；不存在时为空字符串 */
+  content: string
+}
+
+/**
+ * `write_tool_config` 命令的返回。
+ * 对应 Rust 结构体：`models::ToolConfigWriteResult`
+ *
+ * 用户在一键填写对比预览里确认后，把合并结果写回目标文件；
+ * 覆盖已有文件前会创建 `<原名>.modelscout.bak` 备份。
+ */
+export interface ToolConfigWriteResult {
+  /** 实际写入的绝对路径 */
+  path: string
+  /** 写入前创建的备份文件路径；原文件不存在（未备份）时为 null */
+  backupPath: string | null
+  /** 写入的字节数 */
+  bytesWritten: number
+}
+
 // ---- 事件 payload 结构体 ----
 /**
  * 事件 `probe://progress` 的 payload。
@@ -485,6 +518,10 @@ export const COMMAND_NAMES = {
   GET_PROBE_STATE: 'get_probe_state',
   /** 导出配置到用户选择的位置（供「保存文件」使用） */
   SAVE_CONFIG_FILE: 'save_config_file',
+  /** 一键填写：读取目标工具（opencode/dsh）的现有配置文件 */
+  INSPECT_TOOL_CONFIG: 'inspect_tool_config',
+  /** 一键填写：用户确认后把合并结果写入目标配置文件 */
+  WRITE_TOOL_CONFIG: 'write_tool_config',
   /* ---- Key 管家（Beta）：全部带 key_butler_ 前缀，避免与探测命令冲突 ---- */
   /** 批量文本 → 提取 Key → 前缀识别 → 入列（去重） */
   KEY_BUTLER_IMPORT: 'key_butler_import',

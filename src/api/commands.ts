@@ -28,6 +28,8 @@ import type {
   SaveConfigRequest,
   SaveConfigResult,
   Snapshot,
+  ToolConfigFile,
+  ToolConfigWriteResult,
   VaultStatus,
 } from '@/types/contracts'
 
@@ -181,6 +183,45 @@ export function getProbeState(): Promise<ProbeSnapshot> {
  */
 export function saveConfigFile(request: SaveConfigRequest): Promise<SaveConfigResult> {
   return call<SaveConfigResult>(COMMAND_NAMES.SAVE_CONFIG_FILE, { request })
+}
+
+/**
+ * 读取目标工具的现有配置文件（一键填写的预览数据源）。
+ *
+ * 对应 Rust：`commands::inspect_tool_config`
+ *
+ * @param tool        目标工具：`opencode` / `dsh`（决定默认路径推断）
+ * @param customPath  用户改过的目标路径（支持 `~`）；空表示用默认路径
+ */
+export function inspectToolConfig(
+  tool: 'opencode' | 'dsh',
+  customPath?: string,
+): Promise<ToolConfigFile> {
+  return call<ToolConfigFile>(COMMAND_NAMES.INSPECT_TOOL_CONFIG, {
+    tool,
+    customPath: customPath?.trim() ? customPath.trim() : null,
+  })
+}
+
+/**
+ * 把一键填写确认后的内容写入目标配置文件。
+ *
+ * 对应 Rust：`commands::write_tool_config`
+ *
+ * @param path    目标文件绝对路径（来自 inspect 的返回或用户输入）
+ * @param content 合并后的完整文件正文
+ * @param backup  覆盖前是否创建 `.modelscout.bak` 备份
+ */
+export function writeToolConfig(
+  path: string,
+  content: string,
+  backup: boolean,
+): Promise<ToolConfigWriteResult> {
+  return call<ToolConfigWriteResult>(COMMAND_NAMES.WRITE_TOOL_CONFIG, {
+    path,
+    content,
+    backup,
+  })
 }
 
 /**

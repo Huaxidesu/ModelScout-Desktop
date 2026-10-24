@@ -662,6 +662,32 @@ pub struct SaveConfigResult {
     pub path: String,
 }
 
+// ---- 六、一键填写（读取/写入目标工具的配置文件） ----
+
+/// `inspect_tool_config` 的返回。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolConfigFile {
+    /// 解析后的目标文件绝对路径（已做 `~` 展开与默认路径推断）
+    pub path: String,
+    /// 文件是否存在
+    pub exists: bool,
+    /// 文件内容（UTF-8）；不存在时为空字符串
+    pub content: String,
+}
+
+/// `write_tool_config` 的返回。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolConfigWriteResult {
+    /// 实际写入的绝对路径
+    pub path: String,
+    /// 写入前创建的备份文件路径；原文件不存在（未备份）时为 None
+    pub backup_path: Option<String>,
+    /// 写入的字节数
+    pub bytes_written: u64,
+}
+
 // ---- 单元测试 ----
 
 #[cfg(test)]
