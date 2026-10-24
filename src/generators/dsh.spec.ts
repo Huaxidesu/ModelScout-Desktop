@@ -14,6 +14,8 @@ import type { ModelInfo } from '@/types/contracts'
 import {
   buildDshProviderProfile,
   mergeDshIntoText,
+  mergeDshProfileIntoText,
+  removeDshProvider,
   renderDshPatchYml,
   renderDshProviderFragmentYml,
   DSH_LLM_PLUGIN_ID,
@@ -243,5 +245,77 @@ describe('mergeDshIntoText（并入已有补丁）', () => {
 
   it('只有注释的文件抛错（不静默覆盖用户注释）', () => {
     expect(() => mergeDshIntoText('# only comments\n', makeContext())).toThrow(/可解析/)
+  })
+})
+
+describe('基础信息注释（providerComment）', () => {
+  it('合并时在 provider 键上方插入 # 注释,重复合并更新不堆积', () => {
+    const existing = [
+      '- id: llm-pi-ai',
+      '  config:',
+      '    providers:',
+      '      my-gateway:',
+      '        api: openai-completions',
+    ].join('\n')
+    const first = mergeDshIntoText(existing, makeContext(), { providerComment: '名字A · ModelScout' })
+    expect(first.text).toContain('# 名字A · ModelScout')
+    expect(yamlLoad(first.text)).toBeInstanceOf(Array)
+
+    const second = mergeDshIntoText(first.text, makeContext(), { providerComment: '名字B · ModelScout' })
+    expect(second.text).toContain('# 名字B · ModelScout')
+    expect(second.text).not.toContain('名字A')
+    expect((second.text.match(/# .*ModelScout/g) ?? []).length).toBe(1)
+  })
+
+  it('新建文件(create)也带注释且仍是合法 YAML', () => {
+    const result = mergeDshIntoText('', makeContext(), { providerComment: '新建 · 3 个模型 · ModelScout' })
+    expect(result.text).toContain('# 新建 · 3 个模型 · ModelScout')
+    expect(yamlLoad(result.text)).toBeInstanceOf(Array)
+  })
+})
+
+describe('mergeDshProfileIntoText / removeDshProvider（配置管理页）', () => {
+  const existing = [
+    '- id: llm-pi-ai',
+    '  config:',
+    '    providers:',
+    '      my-gateway:',
+    '        apiKeyEnv: OLD',
+    '        api: openai-completions',
+    '        baseURL: https://old/v1',
+    '      other:',
+    '        api: openai-completions',
+  ].join('\n')
+
+  it('用原始 profile 对象替换同名 provider，保留其他条目', () => {
+    const result = mergeDshProfileIntoText(existing, 'my-gateway', {
+      apiKeyEnv: 'NEW_VAR',
+      api: 'openai-completions',
+      baseURL: 'https://new/v1',
+    })
+    expect(result.mode).toBe('merge')
+    const doc = yamlLoad(result.text) as Array<{
+      id: string
+      config: { providers: Record<string, Record<string, string>> }
+    }>
+    expect(doc[0].config.providers['my-gateway'].apiKeyEnv).toBe('NEW_VAR')
+    expect(doc[0].config.providers.other).toEqual({ api: 'openai-completions' })
+  })
+
+  it('remove 删除 provider，其他保留', () => {
+    const result = removeDshProvider(existing, 'my-gateway')
+    expect(result).not.toBeNull()
+    const doc = yamlLoad(result!.text) as Array<{
+      config: { providers: Record<string, unknown> }
+    }>
+    expect(Object.keys(doc[0].config.providers)).toEqual(['other'])
+  })
+
+  it('remove 不存在的键返回 null', () => {
+    expect(removeDshProvider(existing, 'ghost')).toBeNull()
+  })
+
+  it('目标文件为空时 mergeDshProfileIntoText 报错（应先一键填写建骨架）', () => {
+    expect(() => mergeDshProfileIntoText('', 'k', {})).toThrow(/为空/)
   })
 })

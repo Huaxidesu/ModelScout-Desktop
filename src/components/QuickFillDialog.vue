@@ -19,10 +19,11 @@ import { computed, ref, watch } from 'vue'
 import {
   NAlert,
   NButton,
+  NCheckbox,
   NInput,
   NModal,
-  NSpin,
   NTag,
+  NTooltip,
   useMessage,
 } from 'naive-ui'
 
@@ -32,6 +33,12 @@ import { mergeDshIntoText } from '@/generators/dsh'
 import type { GenerateContext } from '@/generators/opencode'
 import { diffLines, type DiffRow } from '@/utils/diffLines'
 import { highlightLine } from '@/utils/highlight'
+import ModelEditTable from '@/components/ModelEditTable.vue'
+import {
+  applyRowsToProbeModels,
+  rowsFromProbeModels,
+  type ModelEditRow,
+} from '@/generators/modelOverrides'
 import type { ToolConfigFile } from '@/types/contracts'
 
 const props = defineProps<{
@@ -95,7 +102,50 @@ const plainKeyFilled = computed(
   () => props.context.apiKeyMode !== 'env' && Boolean(props.context.apiKey?.trim()),
 )
 
-/** 密钥相关的提示（两种工具行为不同） */
+/* ---- 模型参数调整（写入前的最后一道人工修正） ---- */
+
+/** 参数调整区是否展开 */
+const overridesOpen = ref(false)
+/** 当前编辑行（context 变化时重建；未展开过不初始化） */
+const overrideRows = ref<ModelEditRow[]>([])
+
+/** 打开参数调整区时按当前 context 建行 */
+function openOverrides(): void {
+  overrideRows.value = rowsFromProbeModels(props.context.models)
+  overridesOpen.value = true
+}
+
+/** 应用覆盖后的生成上下文（合并/预览全部走它） */
+const effectiveContext = computed<GenerateContext>(() => ({
+  ...props.context,
+  models: applyRowsToProbeModels(props.context.models, overrideRows.value),
+}))
+/* ---- 基础信息注释（写在 provider 条目上方的一行说明） ---- */
+
+/** 是否生成基础信息注释（默认开） */
+const providerCommentOn = ref(true)
+
+/** 目标文件是否支持注释（JSONC / YAML） */
+const commentableTarget = computed(() => /\.(jsonc|ya?ml)$/i.test(targetPath.value.trim()))
+
+/** 目标是否为严格 JSON（注释不可用，提供一键转 JSONC） */
+const jsonTarget = computed(() => /\.json$/i.test(targetPath.value.trim()))
+
+/** 基础信息注释内容（显示名 · 模型数 · 日期） */
+const providerComment = computed(
+  () =>
+    `${props.context.providerName || props.context.providerKey || 'Provider'} · ${props.context.models.length} 个模型 · ModelScout ${new Date().toISOString().slice(0, 10)}`,
+)
+
+/** 一键把目标路径换成 .jsonc（原 .json 不修改；两个文件并存时 opencode 优先读 .json，需自行取舍） */
+function convertTargetToJsonc(): void {
+  const next = targetPath.value.trim().replace(/\.json$/i, '.jsonc')
+  if (next === targetPath.value.trim()) return
+  targetPath.value = next
+  message.info('目标已改为同名 .jsonc；原 .json 文件不会被修改。', { duration: 6000 })
+  void reload()
+}
+
 const keyNotice = computed(() => {
   if (!plainKeyFilled.value) return ''
   if (props.tool === 'dsh') {
@@ -103,6 +153,21 @@ const keyNotice = computed(() => {
   }
   return '即将写入的文件包含明文 API Key，请勿分享或提交到公开仓库。'
 })
+
+/** 对比区滚动容器的引用（顶部「↓ 到底部确认」把对比滚到最后） */
+const diffScrollRef = ref<HTMLElement | null>(null)
+
+/**
+ * 把对比内容滚到最底部。
+ *
+ * 「确认写入」按钮固定在对话框底部、始终可见；这个按钮滚的是对比区
+ * 本身 —— 长配置时直接看完最后一行差异，紧接着就是底部的确认栏。
+ */
+function scrollToConfirm(): void {
+  const el = diffScrollRef.value
+  if (!el) return
+  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+}
 
 /** 路径被改过但还没重新读取（预览对应的是旧路径的内容） */
 const pathDirty = computed(
@@ -146,8 +211,12 @@ function computeMerge(): void {
   if (!file.value) return
   try {
     const existing = file.value.exists ? file.value.content : ''
+    const comment =
+      providerCommentOn.value && commentableTarget.value ? providerComment.value : undefined
     if (props.tool === 'opencode') {
-      const result = mergeOpenCodeIntoText(existing, props.context)
+      const result = mergeOpenCodeIntoText(existing, effectiveContext.value, {
+        providerComment: comment,
+      })
       mergedText.value = result.text
       mergeModeLabel.value =
         result.mode === 'create'
@@ -157,7 +226,9 @@ function computeMerge(): void {
             : '现有文件结构特殊，改为整体重写（其他配置项保留）'
       mergeWarnings.value = result.warnings
     } else {
-      const result = mergeDshIntoText(existing, props.context)
+      const result = mergeDshIntoText(existing, effectiveContext.value, {
+        providerComment: comment,
+      })
       mergedText.value = result.text
       mergeModeLabel.value =
         result.mode === 'create'
@@ -183,13 +254,16 @@ watch(
       mergeWarnings.value = []
       fatal.value = ''
       targetPath.value = ''
+      overridesOpen.value = false
+      overrideRows.value = []
       void reload()
     }
   },
 )
 
+// 上下文或参数调整变化都重算合并；文件内容不重读
 watch(
-  () => props.context,
+  effectiveContext,
   () => {
     if (props.show) computeMerge()
   },
@@ -227,11 +301,11 @@ function close(): void {
     class="ms-quickfill"
     :bordered="false"
     size="huge"
-    style="width: min(1200px, 96vw); height: min(860px, 92vh)"
+    style="width: min(1200px, 96vw)"
     :mask-closable="false"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
-    <div class="flex h-full min-h-0 flex-col gap-3">
+    <div class="flex h-full min-h-0 flex-1 flex-col gap-2">
       <!-- 目标路径 -->
       <div class="flex shrink-0 flex-wrap items-center gap-2">
         <span class="text-[11px] text-ms-text-faint">目标文件</span>
@@ -247,9 +321,41 @@ function close(): void {
         <NTag v-if="file" size="small" :bordered="false" :type="file.exists ? 'success' : 'warning'">
           {{ file.exists ? '文件已存在' : '文件不存在，将新建' }}
         </NTag>
+        <NTooltip trigger="hover" style="max-width: 260px">
+          <template #trigger>
+            <NButton size="small" quaternary type="primary" @click="scrollToConfirm()">
+              ↓ 到底部确认
+            </NButton>
+          </template>
+          一键把对比内容滚到最底部。「确认填写」按钮固定在对话框最下方,随时可点。
+        </NTooltip>
         <NTag v-if="pathDirty" size="small" :bordered="false" type="error">
           路径已修改，请点「重新读取」
         </NTag>
+        <NTooltip v-if="jsonTarget" trigger="hover" style="max-width: 320px">
+          <template #trigger>
+            <NButton
+              size="small"
+              disabled
+              style="color: #0a0e14; background-color: #0a0e14; border-color: #0a0e14"
+            >
+              注释不可用（JSON）
+            </NButton>
+          </template>
+            目标是严格 JSON：不允许注释，基础信息（名字 / 模型数）无法以注释写入。
+            点「转 JSONC」把目标换成同名 .jsonc（原文件不动）。
+        </NTooltip>
+        <NButton v-if="jsonTarget" size="small" quaternary @click="convertTargetToJsonc()">
+          转 JSONC
+        </NButton>
+        <NCheckbox
+          v-else-if="commentableTarget"
+          size="small"
+          :checked="providerCommentOn"
+          @update:checked="providerCommentOn = $event"
+        >
+          基础信息注释
+        </NCheckbox>
       </div>
 
       <!-- 状态与警告 -->
@@ -276,59 +382,114 @@ function close(): void {
         </NAlert>
       </div>
 
-      <!-- 左右对比 -->
-      <div class="ms-code-block ms-code min-h-0 flex-1 overflow-auto" style="border-top: 1px solid var(--color-ms-border)">
-        <NSpin :show="loading" size="small">
-          <div class="min-w-[720px]">
-            <!-- 列头 -->
-            <div
-              class="sticky top-0 z-[1] grid border-b border-ms-border bg-ms-panel-2/95 text-[10px] text-ms-text-faint"
-              style="grid-template-columns: 3rem 1fr 3rem 1fr"
+      <!-- 模型参数调整(写入前的人工修正,右侧预览实时跟随) -->
+      <div class="shrink-0">
+        <NButton v-if="!overridesOpen" size="tiny" quaternary @click="openOverrides()">
+          ⚙ 调整模型参数（思考 / 附件 / 工具 / 上下文 / 输出）
+        </NButton>
+        <template v-else>
+          <div class="mb-1 flex items-center justify-between">
+            <span class="text-[11px] text-ms-text-dim">
+              模型参数调整 —— 右侧预览与最终写入都使用这里的值
+            </span>
+            <NButton
+              size="tiny"
+              quaternary
+              @click="overridesOpen = false; overrideRows = []"
             >
-              <div class="px-2 py-1">行</div>
-              <div class="border-l border-ms-border px-2 py-1">原文件（左）</div>
-              <div class="border-l border-ms-border px-2 py-1">行</div>
-              <div class="border-l border-ms-border px-2 py-1">填写后（右）</div>
-            </div>
-            <div
-              v-for="(row, index) in diffRows"
-              :key="index"
-              class="grid"
-              style="grid-template-columns: 3rem 1fr 3rem 1fr"
-            >
-              <div
-                class="select-none px-2 text-right leading-5"
-                :class="row.type === 'del' ? 'bg-red-500/10 text-red-300/70' : 'text-ms-text-faint opacity-50'"
-              >
-                {{ row.leftNo ?? '' }}
-              </div>
-              <div
-                class="whitespace-pre leading-5"
-                :class="row.type === 'del' ? 'bg-red-500/10' : ''"
-                v-html="row.left !== null ? highlightLine(row.left) : ''"
-              />
-              <div
-                class="select-none border-l border-ms-border px-2 text-right leading-5"
-                :class="row.type === 'add' ? 'bg-emerald-500/10 text-emerald-300/70' : 'text-ms-text-faint opacity-50'"
-              >
-                {{ row.rightNo ?? '' }}
-              </div>
-              <div
-                class="whitespace-pre leading-5"
-                :class="row.type === 'add' ? 'bg-emerald-500/10' : ''"
-                v-html="row.right !== null ? highlightLine(row.right) : ''"
-              />
-            </div>
+              收起并还原
+            </NButton>
           </div>
-        </NSpin>
+          <div class="max-h-[30vh] overflow-y-auto">
+            <ModelEditTable
+              :rows="overrideRows"
+              :show-tools="tool === 'opencode'"
+              :show-reasoning="true"
+            />
+          </div>
+        </template>
       </div>
 
-      <!-- 底部 -->
-      <div class="flex shrink-0 items-center justify-between">
+      <!-- 左右对比：双面板（纯 flex，无 grid / 无 sticky） -->
+      <!--
+        结构：列头（静态，不参与滚动）+ 共享纵向滚动区；每侧面板独立横向
+        滚动（长行互不挤兑，与 VSCode 相同）。行是普通 flex 块、行背景为
+        内联 rgba：此前 grid + sticky + 双向滚动的组合会触发 WebView2 的
+        合成层重绘缺陷（滚动后行背景只留首屏），本结构不含任何触发条件。
+        两面板渲染同一 DiffRow 序列（空侧占位），行高一致 → 天然对齐。
+      -->
+      <div class="flex min-h-0 flex-1 flex-col">
+        <!-- 列头 -->
+        <div class="flex shrink-0 border-b border-ms-border text-[10px] text-ms-text-faint" style="background-color: var(--color-ms-panel-2)">
+          <div class="flex min-w-0 flex-1 items-center gap-2 border-r border-ms-border px-2 py-1">
+            <span class="w-7 shrink-0 text-right">行</span>
+            <span class="truncate">原文件（左）</span>
+          </div>
+          <div class="flex min-w-0 flex-1 items-center gap-2 px-2 py-1">
+            <span class="w-7 shrink-0 text-right">行</span>
+            <span class="truncate">填写后（右）</span>
+          </div>
+        </div>
+
+        <!-- 共享纵向滚动 + 双面板 -->
+        <div ref="diffScrollRef" class="min-h-0 flex-1 overflow-y-auto">
+          <div v-if="loading && diffRows.length === 0" class="px-3 py-8 text-center text-[11px] text-ms-text-faint">
+            正在读取目标文件…
+          </div>
+          <div v-else-if="diffRows.length === 0" class="px-3 py-8 text-center text-[11px] text-ms-text-faint">
+            没有可展示的内容
+          </div>
+          <div v-else class="flex items-start">
+            <!-- 左面板 -->
+            <div class="min-w-0 flex-1 overflow-x-auto border-r border-ms-border">
+              <div
+                v-for="(row, index) in diffRows"
+                :key="index"
+                class="flex w-max items-start"
+                :style="row.type === 'del' ? 'min-width: 100%; background-image: linear-gradient(rgba(239, 68, 68, 0.14), rgba(239, 68, 68, 0.14))' : 'min-width: 100%'"
+              >
+                <span
+                  class="w-10 shrink-0 select-none px-2 text-right leading-5"
+                  :style="row.type === 'del'
+                    ? 'color: rgba(252, 165, 165, 0.8)'
+                    : 'color: var(--color-ms-text-faint); opacity: 0.5'"
+                >{{ row.leftNo ?? '' }}</span>
+                <span
+                  class="whitespace-pre px-2 leading-5"
+                  v-html="row.left !== null ? highlightLine(row.left) : ''"
+                />
+              </div>
+            </div>
+            <!-- 右面板 -->
+            <div class="min-w-0 flex-1 overflow-x-auto">
+              <div
+                v-for="(row, index) in diffRows"
+                :key="index"
+                class="flex w-max items-start"
+                :style="row.type === 'add' ? 'min-width: 100%; background-image: linear-gradient(rgba(16, 185, 129, 0.14), rgba(16, 185, 129, 0.14))' : 'min-width: 100%'"
+              >
+                <span
+                  class="w-10 shrink-0 select-none px-2 text-right leading-5"
+                  :style="row.type === 'add'
+                    ? 'color: rgba(110, 231, 183, 0.8)'
+                    : 'color: var(--color-ms-text-faint); opacity: 0.5'"
+                >{{ row.rightNo ?? '' }}</span>
+                <span
+                  class="whitespace-pre px-2 leading-5"
+                  v-html="row.right !== null ? highlightLine(row.right) : ''"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部（确认区固定可见；顶部的「↓ 到底部确认」把对比内容滚到最后） -->
+      <div class="flex shrink-0 items-center justify-between gap-3 border-t border-ms-border pt-2">
         <div class="text-[11px] text-ms-text-faint">
           <template v-if="diffRows.length > 0">
-            对比：{{ stats.total }} 行 · <span class="text-emerald-400">+{{ stats.added }}</span>
-            · <span class="text-red-400">-{{ stats.removed }}</span>
+            对比：{{ stats.total }} 行 · <span style="color: #34d399">+{{ stats.added }}</span>
+            · <span style="color: #f87171">-{{ stats.removed }}</span>
           </template>
           <template v-else-if="!loading && !fatal">没有可展示的内容</template>
         </div>
@@ -349,18 +510,30 @@ function close(): void {
   </NModal>
 </template>
 
-<style scoped>
-/* 固定高度的卡片：让内容区撑满并约束滚动 */
-.ms-quickfill :deep(.n-card__content) {
+<style>
+/*
+ * 全局样式（不能 scoped）：NModal 会 Teleport 到 body,组件的 scoped
+ * data-v 属性到不了卡片内部 —— 此前对话框因此失去高度约束,内容把
+ * 卡片撑到上万像素高,滚动发生在外层遮罩上,既让「确认按钮要滚很久」,
+ * 也触发 WebView2 在遮罩滚动下的行背景丢失。
+ */
+.ms-quickfill.n-card {
+  height: min(860px, 92vh);
+  display: flex;
+  flex-direction: column;
+}
+/* 注意类名是 n-card-content（连字符），不是 n-card__content */
+.ms-quickfill .n-card-content,
+.ms-quickfill .n-card__content {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
+</style>
 
-.ms-quickfill :deep(.n-spin-content) {
-  min-width: 100%;
-}
+<style scoped>
 
 /* 左右对比行的字号（等宽字体由全局 .ms-code 提供） */
 .ms-code {

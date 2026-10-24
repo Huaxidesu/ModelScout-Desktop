@@ -18,6 +18,7 @@
 import { computed, ref, watch } from 'vue'
 import {
   NButton,
+  NCheckbox,
   NTabs,
   NTabPane,
   NSelect,
@@ -55,6 +56,13 @@ import {
   sanitizeProviderKey,
 } from '@/generators/naming'
 import { highlightLine } from '@/utils/highlight'
+import { parseJsonc } from '@/utils/jsonc'
+import ModelEditTable from '@/components/ModelEditTable.vue'
+import {
+  applyRowsToProbeModels,
+  rowsFromProbeModels,
+  type ModelEditRow,
+} from '@/generators/modelOverrides'
 
 import type { ModelInfo } from '@/types/contracts'
 
@@ -62,6 +70,11 @@ const props = defineProps<{
   probe: ReturnType<typeof useProbe>
   /** 是否处于全屏放大态（由 App.vue 控制） */
   maximized?: boolean
+  /**
+   * 一键填写的外部触发器（时间戳）。Key 管家「填入配置」注入模型后由
+   * App.vue 置位，这里据此直接弹出一键填写对话框。
+   */
+  fillTrigger?: number
 }>()
 
 const emit = defineEmits<{
@@ -176,6 +189,114 @@ const maskedKey = computed(() => {
   return `${key.slice(0, 5)}…${key.slice(-4)}`
 })
 
+/* ---- 模型参数调整（与一键填写共用的投影，见 modelOverrides.ts） ---- */
+
+/** 参数调整区是否展开 */
+const overridesOpen = ref(false)
+/** 当前编辑行（展开时按当前选中模型重建） */
+const overrideRows = ref<ModelEditRow[]>([])
+
+/** 展开参数调整 */
+function openOverrides(): void {
+  overrideRows.value = rowsFromProbeModels(context.value.models)
+  overridesOpen.value = true
+}
+
+/** 应用覆盖后的生成上下文：预览文本与一键填写都使用它 */
+const effectiveContext = computed(() => ({
+  ...context.value,
+  models: applyRowsToProbeModels(context.value.models, overrideRows.value),
+}))
+
+/** 覆盖是否生效（有展开且改过任何字段时视为已调整） */
+const overridesDirty = computed(() =>
+  overridesOpen.value &&
+  JSON.stringify(overrideRows.value) !== JSON.stringify(rowsFromProbeModels(context.value.models)),
+)
+
+/* ---- 手动编辑（记事本式自由改文本，改完校验后固化） ---- */
+
+/** 各 Tab 的手动文本；null = 未手动编辑 */
+const manualTexts = ref<{ opencode: string | null; hardness: string | null }>({
+  opencode: null,
+  hardness: null,
+})
+/** 编辑态（textarea 模式） */
+const editing = ref(false)
+/** 编辑草稿 */
+const editDraft = ref('')
+/** 校验错误（非空时禁止完成） */
+const editError = ref('')
+
+/** 当前 Tab 是否存在手动文本 */
+const manualActive = computed(() => manualTexts.value[activeTab.value] !== null)
+
+/** 进入编辑：以当前展示文本为草稿 */
+function startEdit(): void {
+  editDraft.value = activeText.value
+  editError.value = ''
+  editing.value = true
+}
+
+/** 放弃编辑态（不动已固化的手动文本） */
+function cancelEdit(): void {
+  editing.value = false
+  editDraft.value = ''
+  editError.value = ''
+}
+
+/** 完成编辑：JSON 家族格式校验可解析后固化 */
+function finishEdit(): void {
+  const fmt = activeTab.value === 'opencode' ? opencodeFormat.value : hardnessFormat.value
+  const jsonFamily = activeTab.value === 'opencode' ? fmt !== 'toml' : fmt === 'json' || fmt === 'jsonc'
+  if (jsonFamily) {
+    try {
+      parseJsonc(editDraft.value)
+    } catch (err) {
+      editError.value = `不是合法的 JSON/JSONC：${err instanceof Error ? err.message : String(err)}`
+      return
+    }
+  }
+  manualTexts.value[activeTab.value] = editDraft.value
+  editing.value = false
+  editDraft.value = ''
+  editError.value = ''
+  message.success('已保存手动修改（复制 / 导出 / 预览均使用该文本）')
+}
+
+/** 丢弃手动文本，回到自动生成 */
+function discardManual(): void {
+  manualTexts.value[activeTab.value] = null
+}
+
+/* ---- 顶部基础信息注释（JSONC 家族可用；JSON 提供一键转 JSONC） ---- */
+
+/** 是否生成顶部基础信息注释（默认开） */
+const headerComment = ref(true)
+
+/** 当前 Tab/format 是否支持注释 */
+const commentableFormat = computed(() =>
+  activeTab.value === 'opencode'
+    ? opencodeFormat.value === 'jsonc' || opencodeFormat.value === 'fragment'
+    : hardnessFormat.value === 'jsonc',
+)
+
+/** 基础信息注释行 */
+const headerLine = computed(
+  () =>
+    `// ${providerName.value || providerKey.value} · ${effectiveContext.value.models.length} 个模型 · ModelScout 生成于 ${new Date().toISOString().slice(0, 10)}`,
+)
+
+/** 一键转 JSONC（JSON 不支持注释时的引导动作） */
+function convertToCommentable(): void {
+  if (activeTab.value === 'opencode') {
+    opencodeFormat.value = 'jsonc'
+  } else {
+    hardnessFormat.value = 'jsonc'
+  }
+  message.info('已切换为 JSONC，顶部可生成基础信息注释')
+}
+
 /**
  * 连接表单里选择的密钥来源。
  *
@@ -233,19 +354,31 @@ const context = computed(() => ({
 
 // ---- 生成结果 ----
 
-/** OpenCode 配置文本 */
-const opencodeText = computed(() => {
-  if (context.value.models.length === 0) {
+/** OpenCode 生成文本（未含手动编辑） */
+const opencodeBaseText = computed(() => {
+  if (effectiveContext.value.models.length === 0) {
     return '// 尚未选择任何模型。请在上方结果表格中勾选要导出的模型。'
   }
   switch (opencodeFormat.value) {
     case 'json':
-      return renderOpenCodeJson(context.value)
+      return renderOpenCodeJson(effectiveContext.value)
     case 'fragment':
-      return renderOpenCodeProviderFragment(context.value)
+      return renderOpenCodeProviderFragment(effectiveContext.value)
     default:
-      return renderOpenCodeJsonc(context.value)
+      return renderOpenCodeJsonc(effectiveContext.value)
   }
+})
+
+/** 支持注释的形态默认在顶部生成一行基础信息（名字 · 模型数 · 日期） */
+const opencodeText = computed(() => {
+  if (
+    headerComment.value &&
+    (opencodeFormat.value === 'jsonc' || opencodeFormat.value === 'fragment')
+  ) {
+    return `${headerLine.value}
+${opencodeBaseText.value}`
+  }
+  return opencodeBaseText.value
 })
 
 /** OpenCode 当前形态对应的建议文件名 */
@@ -262,25 +395,34 @@ const opencodeFileName = computed(() => {
 
 /** DeepSeekHardness 配置文本 */
 const hardnessText = computed(() => {
-  if (context.value.models.length === 0) {
+  if (effectiveContext.value.models.length === 0) {
     return '// 尚未选择任何模型。请在上方结果表格中勾选要导出的模型。'
   }
-  switch (hardnessFormat.value) {
-    case 'json':
-      return renderHardnessJson(context.value)
-    case 'toml':
-      return renderHardnessToml(context.value)
-    case 'dshYaml':
-      return renderDshProviderFragmentYml(context.value)
-    default:
-      return renderHardnessJsonc(context.value)
+  const base = (() => {
+    switch (hardnessFormat.value) {
+      case 'json':
+        return renderHardnessJson(effectiveContext.value)
+      case 'toml':
+        return renderHardnessToml(effectiveContext.value)
+      case 'dshYaml':
+        return renderDshProviderFragmentYml(effectiveContext.value)
+      default:
+        return renderHardnessJsonc(effectiveContext.value)
+    }
+  })()
+  if (headerComment.value && hardnessFormat.value === 'jsonc') {
+    return `${headerLine.value}
+${base}`
   }
+  return base
 })
 
-/** 当前激活 Tab 对应的文本 */
-const activeText = computed(() =>
-  activeTab.value === 'opencode' ? opencodeText.value : hardnessText.value,
-)
+/** 当前激活 Tab 对应的文本（手动编辑优先于自动生成） */
+const activeText = computed(() => {
+  const manual = manualTexts.value[activeTab.value]
+  if (manual !== null) return manual
+  return activeTab.value === 'opencode' ? opencodeText.value : hardnessText.value
+})
 
 /** 当前激活 Tab 对应的建议文件名 */
 const activeFileName = computed(() => {
@@ -302,6 +444,14 @@ const activeFileName = computed(() => {
 /** 一键填写的目标工具（跟随当前 Tab） */
 const quickFillTool = computed<'opencode' | 'dsh'>(() =>
   activeTab.value === 'opencode' ? 'opencode' : 'dsh',
+)
+
+/** 外部触发（Key 管家 → 填入配置）：直接弹出一键填写 */
+watch(
+  () => props.fillTrigger,
+  (trigger) => {
+    if (trigger && trigger > 0) quickFillShow.value = true
+  },
 )
 
 /** 一键填写成功后的轻提示 */
@@ -539,6 +689,32 @@ watch(
           :consistent-menu-width="false"
         />
 
+        <!-- 顶部基础信息注释:JSONC 家族可用;JSON 黑置灰 + 一键转 JSONC -->
+        <NTooltip v-if="!commentableFormat" trigger="hover" style="max-width: 320px">
+          <template #trigger>
+            <NButton
+              size="tiny"
+              disabled
+              style="color: #0a0e14; background-color: #0a0e14; border-color: #0a0e14"
+            >
+              基础信息注释不可用（JSON）
+            </NButton>
+          </template>
+            JSON 是严格格式，不允许任何注释 —— 顶部基础信息（名字 / 模型数）无法以注释写入。
+            点旁边的「转 JSONC」即可换用支持注释的格式（OpenCode 的 opencode.json 本身就按 JSONC 解析，扩展名不变也能用）。
+        </NTooltip>
+        <NButton v-if="!commentableFormat" size="tiny" quaternary @click="convertToCommentable()">
+          转 JSONC
+        </NButton>
+        <NCheckbox
+          v-else
+          size="small"
+          :checked="headerComment"
+          @update:checked="headerComment = $event"
+        >
+          基础信息注释
+        </NCheckbox>
+
         <NTooltip trigger="hover">
           <template #trigger>
             <NButton
@@ -643,6 +819,37 @@ watch(
       </div>
     </div>
 
+    <!-- ---------- 模型参数调整 ---------- -->
+    <div class="shrink-0 border-b border-ms-border px-3 py-2">
+      <NButton v-if="!overridesOpen" size="tiny" quaternary @click="openOverrides()">
+        ⚙ 调整模型参数（思考 / 附件 / 工具 / 上下文 / 输出）
+      </NButton>
+      <template v-else>
+        <div class="mb-1 flex items-center justify-between">
+          <span class="text-[11px] text-ms-text-dim">
+            模型参数调整 —— 预览与「一键填写」都使用这里的值
+            <NTag v-if="overridesDirty" size="tiny" :bordered="false" type="warning" class="ml-1">
+              已调整
+            </NTag>
+          </span>
+          <NButton
+            size="tiny"
+            quaternary
+            @click="overridesOpen = false; overrideRows = []"
+          >
+            收起并还原
+          </NButton>
+        </div>
+        <div class="max-h-[26vh] overflow-y-auto">
+          <ModelEditTable
+            :rows="overrideRows"
+            :show-tools="activeTab === 'opencode'"
+            :show-reasoning="true"
+          />
+        </div>
+      </template>
+    </div>
+
     <!-- ---------- 提醒条 ---------- -->
     <NAlert
       v-if="context.models.length > 0"
@@ -690,8 +897,32 @@ watch(
           <div class="shrink-0 border-b border-ms-border px-3 py-1 text-[10px] text-ms-text-faint">
             {{ stats.opencodeLines }} 行 · {{ stats.opencodeChars }} 字符 ·
             建议文件名 {{ opencodeFileName }}
+            <span class="ml-auto flex items-center gap-1.5">
+              <NTag v-if="manualActive && !editing" size="tiny" :bordered="false" type="warning">
+                已手动编辑
+              </NTag>
+              <template v-if="editing && activeTab === 'opencode'">
+                <NButton size="tiny" type="primary" @click="finishEdit()">完成</NButton>
+                <NButton size="tiny" quaternary @click="cancelEdit()">取消</NButton>
+                <span v-if="editError" class="max-w-[360px] truncate text-[10px] text-ms-danger" :title="editError">
+                  { editError }
+                </span>
+              </template>
+              <template v-else-if="activeTab === 'opencode'">
+                <NButton v-if="manualActive" size="tiny" quaternary @click="discardManual()">
+                  放弃手动修改
+                </NButton>
+                <NButton size="tiny" quaternary @click="startEdit()">✎ 编辑</NButton>
+              </template>
+            </span>
           </div>
-          <div ref="opencodeRef" class="ms-code-block ms-code min-h-0 flex-1 overflow-auto px-3 py-2">
+          <textarea
+            v-if="editing && activeTab === 'opencode'"
+            v-model="editDraft"
+            class="ms-code-block ms-code min-h-0 flex-1 resize-none bg-transparent px-3 py-2 outline-none"
+            spellcheck="false"
+          />
+          <div v-else ref="opencodeRef" class="ms-code-block ms-code min-h-0 flex-1 overflow-auto px-3 py-2">
             <div
               v-for="line in opencodeLines"
               :key="line.no"
@@ -712,8 +943,32 @@ watch(
           <div class="shrink-0 border-b border-ms-border px-3 py-1 text-[10px] text-ms-text-faint">
             {{ stats.hardnessLines }} 行 · {{ stats.hardnessChars }} 字符 ·
             建议文件名 {{ activeTab === 'hardness' ? activeFileName : FORMAT_ASSUMPTIONS.defaultFileName }}
+            <span class="ml-auto flex items-center gap-1.5">
+              <NTag v-if="manualActive && !editing" size="tiny" :bordered="false" type="warning">
+                已手动编辑
+              </NTag>
+              <template v-if="editing && activeTab === 'hardness'">
+                <NButton size="tiny" type="primary" @click="finishEdit()">完成</NButton>
+                <NButton size="tiny" quaternary @click="cancelEdit()">取消</NButton>
+                <span v-if="editError" class="max-w-[360px] truncate text-[10px] text-ms-danger" :title="editError">
+                  { editError }
+                </span>
+              </template>
+              <template v-else-if="activeTab === 'hardness'">
+                <NButton v-if="manualActive" size="tiny" quaternary @click="discardManual()">
+                  放弃手动修改
+                </NButton>
+                <NButton size="tiny" quaternary @click="startEdit()">✎ 编辑</NButton>
+              </template>
+            </span>
           </div>
-          <div ref="hardnessRef" class="ms-code-block ms-code min-h-0 flex-1 overflow-auto px-3 py-2">
+          <textarea
+            v-if="editing && activeTab === 'hardness'"
+            v-model="editDraft"
+            class="ms-code-block ms-code min-h-0 flex-1 resize-none bg-transparent px-3 py-2 outline-none"
+            spellcheck="false"
+          />
+          <div v-else ref="hardnessRef" class="ms-code-block ms-code min-h-0 flex-1 overflow-auto px-3 py-2">
             <div
               v-for="line in hardnessLines"
               :key="line.no"
@@ -733,7 +988,7 @@ watch(
     <QuickFillDialog
       v-model:show="quickFillShow"
       :tool="quickFillTool"
-      :context="context"
+      :context="effectiveContext"
       @written="onQuickFillWritten"
     />
   </section>

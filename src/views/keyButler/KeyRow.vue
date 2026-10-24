@@ -39,6 +39,8 @@ const emit = defineEmits<{
   (e: 'edit', entry: KeyEntry): void
   (e: 'delete', entry: KeyEntry): void
   (e: 'select', entry: KeyEntry, selected: boolean): void
+  (e: 'probe', entry: KeyEntry): void
+  (e: 'fill-config', entry: KeyEntry): void
 }>()
 
 const message = useMessage()
@@ -135,6 +137,20 @@ function handleMenu(key: string): void {
   if (key === 'edit') emit('edit', props.entry)
   if (key === 'delete') emit('delete', props.entry)
 }
+
+/** 最近一次「发起探测」的说明（探测按钮的 tooltip） */
+const probeHint = computed(() => {
+  const { lastProbeAt, lastProbeStatus, lastProbeModels } = props.entry
+  if (lastProbeAt === null || lastProbeStatus === null) {
+    return '用这条 Key 的 Base URL 发起一次完整探测（自动切换到探测页），结果会记录在这条 Key 上。'
+  }
+  const when = formatRelativeTime(lastProbeAt)
+  if (lastProbeStatus === 'done') {
+    return `最近探测（${when}）：成功，${lastProbeModels ?? 0} 个模型。再次点击将重新探测。`
+  }
+  if (lastProbeStatus === 'cancelled') return `最近探测（${when}）：已中止。再次点击将重新探测。`
+  return `最近探测（${when}）：失败。点击可重试。`
+})
 </script>
 
 <template>
@@ -189,6 +205,40 @@ function handleMenu(key: string): void {
       <NButton size="tiny" quaternary :disabled="busy || locked" @click="emit('check', entry)">
         检测
       </NButton>
+      <NTooltip trigger="hover" style="max-width: 320px">
+        <template #trigger>
+          <NButton
+            size="tiny"
+            quaternary
+            :disabled="locked || !entry.baseUrl"
+            @click="emit('probe', entry)"
+          >
+            探测
+          </NButton>
+        </template>
+        {{
+          entry.baseUrl
+            ? probeHint
+            : '这条 Key 还没有设置 Base URL（点「编辑」补一个），无法发起探测。'
+        }}
+      </NTooltip>
+      <NTooltip trigger="hover" style="max-width: 320px">
+        <template #trigger>
+          <NButton
+            size="tiny"
+            quaternary
+            :disabled="locked || !entry.baseUrl"
+            @click="emit('fill-config', entry)"
+          >
+            填入配置
+          </NButton>
+        </template>
+        {{
+          entry.baseUrl
+            ? '用这条 Key 拉取模型清单并打开「一键填写」，把 provider 直接写进 OpenCode / dsh 配置文件'
+            : '这条 Key 还没有设置 Base URL（点「编辑」补一个），无法填入配置。'
+        }}
+      </NTooltip>
       <NButton size="tiny" quaternary :disabled="locked" @click="emit('history', entry)">
         历史
       </NButton>

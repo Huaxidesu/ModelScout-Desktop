@@ -945,10 +945,15 @@ fn write_vault(
     let text = serde_json::to_string_pretty(&file)
         .map_err(|err| format!("序列化密文库失败：{err}"))?;
 
-    // 原子替换：先写临时文件再 rename，避免写入中途崩溃留下半截密文
+    // 原子替换：先写临时文件再 rename，避免写入中途崩溃留下半截密文。
+    // 错误信息带上完整路径：写入失败常见于目录被网盘同步 / 杀软短暂锁定，
+    // 只给一句「拒绝访问」用户无从排查。
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, text.as_bytes()).map_err(|err| format!("写入密文库失败：{err}"))?;
-    std::fs::rename(&tmp, path).map_err(|err| format!("替换密文库失败：{err}"))?;
+    std::fs::write(&tmp, text.as_bytes())
+        .map_err(|err| format!("写入密文库失败（{}）：{err}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|err| {
+        format!("替换密文库失败（{} → {}）：{err}", tmp.display(), path.display())
+    })?;
     Ok(())
 }
 
@@ -1002,6 +1007,9 @@ mod tests {
             balance_endpoint: BalanceEndpointKind::BuiltinOneapi,
             custom_endpoint: None,
             base_url: None,
+            last_probe_at: None,
+            last_probe_status: None,
+            last_probe_models: None,
         }
     }
 

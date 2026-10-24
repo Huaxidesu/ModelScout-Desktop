@@ -345,9 +345,14 @@ export class DshMergeError extends Error {
 export function mergeDshIntoText(
   existingText: string,
   context: GenerateContext,
+  options: { providerComment?: string } = {},
 ): DshMergeResult {
   if (existingText.trim() === '') {
-    return { mode: 'create', text: renderDshPatchYml(context), warnings: [] }
+    const body = renderDshPatchYml(context)
+    const text = options.providerComment
+      ? insertYamlComment(body, resolveContext(context).providerKey, options.providerComment)
+      : body
+    return { mode: 'create', text, warnings: [] }
   }
 
   let doc: unknown
@@ -378,9 +383,136 @@ export function mergeDshIntoText(
 
   const ctx = resolveContext(context)
   const profile = buildDshProviderProfile(context)
+  const result = mergeDshProfileIntoText(existingText, ctx.providerKey, {
+    ...profile,
+  })
+  if (options.providerComment) {
+    return {
+      ...result,
+      text: insertYamlComment(result.text, ctx.providerKey, options.providerComment),
+    }
+  }
+  return result
+}
 
-  // 定位 llm-pi-ai 条目
-  let entryIndex = doc.findIndex(
+/**
+ * 在 YAML 文本中 provider 键所在行上方插入一行 `# 注释`（同缩进）。
+ *
+ * 键已是标记注释（含 ModelScout）的上一行会被原位替换,避免重复填写堆积;
+ * 找不到键行时原样返回(不冒险)。
+ */
+export function insertYamlComment(text: string, providerKey: string, comment: string): string {
+  const escaped = providerKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`^(\\s+)(${escaped}|"${escaped}"|'${escaped}'):(\\s|$)`, 'm')
+  const match = re.exec(text)
+  if (!match || match.index === undefined) return text
+  const lineStart = match.index
+  const indent = match[1]
+  const commentLine = `${indent}# ${comment}`
+
+  if (lineStart > 0) {
+    const prevEnd = lineStart - 1
+    const prevStart = text.lastIndexOf('\n', Math.max(prevEnd - 1, 0)) + 1
+    const prevLine = text.slice(prevStart, prevEnd)
+    if (/^\s*#.*ModelScout/.test(prevLine)) {
+      return text.slice(0, prevStart) + commentLine + text.slice(lineStart)
+    }
+  }
+  return text.slice(0, lineStart) + commentLine + '\n' + text.slice(lineStart)
+}
+
+/**
+ * 把一个 provider 对象（原始数据，不必是本生成器构造的）并入补丁文件。
+ *
+ * 配置管理页「绑定密钥 / 改动回写」用：在解析出的现有 provider 上
+ * 修改字段后原样写回，保留解析时见到的其余字段。
+ */
+export function mergeDshProfileIntoText(
+  existingText: string,
+  providerKey: string,
+  profile: Record<string, unknown>,
+): DshMergeResult {
+  if (existingText.trim() === '') {
+    throw new DshMergeError('目标文件为空；请先用「一键填写」生成完整补丁后再做增量修改。')
+  }
+
+  let doc: unknown
+  try {
+    doc = yamlLoad(existingText)
+  } catch (err) {
+    const message = err instanceof Error ? err.message.split('\n')[0] : String(err)
+    if (/input is empty/.test(message)) {
+      throw new DshMergeError('现有文件里没有可解析的 YAML 内容（可能只有注释），无法改写。')
+    }
+    throw new DshMergeError(`现有文件不是合法的 YAML（${message}），无法改写。`)
+  }
+  if (doc === null || doc === undefined) {
+    throw new DshMergeError('现有文件里没有可解析的 YAML 内容，无法改写。')
+  }
+  if (!Array.isArray(doc)) {
+    throw new DshMergeError('cordis.patch.yml 的顶层应是插件条目数组，当前不是，无法改写。')
+  }
+
+  applyDshProvider(doc, providerKey, profile)
+
+  const merged = yamlDump(doc, { indent: 2, lineWidth: -1, noRefs: true })
+  return {
+    mode: 'merge',
+    text: `${merged}\n`,
+    warnings: [
+      '改写会重新排版 YAML 并丢失文件里的注释；其他插件条目与其他 provider 保留。',
+    ],
+  }
+}
+
+/**
+ * 从补丁文件里删除一个 provider。
+ *
+ * @returns 该 provider 不存在时返回 null
+ */
+export function removeDshProvider(
+  existingText: string,
+  providerKey: string,
+): DshMergeResult | null {
+  let doc: unknown
+  try {
+    doc = yamlLoad(existingText)
+  } catch (err) {
+    throw new DshMergeError(
+      `现有文件不是合法的 YAML（${err instanceof Error ? err.message.split('\n')[0] : String(err)}），无法改写。`,
+    )
+  }
+  if (!Array.isArray(doc)) {
+    throw new DshMergeError('cordis.patch.yml 的顶层应是插件条目数组，当前不是，无法改写。')
+  }
+
+  const entry = doc.find(
+    (item) =>
+      typeof item === 'object' && item !== null && !Array.isArray(item) &&
+      (item as Record<string, unknown>).id === DSH_LLM_PLUGIN_ID,
+  ) as Record<string, unknown> | undefined
+  if (!entry) return null
+
+  const config = entry.config as Record<string, unknown> | undefined
+  const providers = config?.providers as Record<string, unknown> | undefined
+  if (!providers || !(providerKey in providers)) return null
+
+  delete providers[providerKey]
+  const merged = yamlDump(doc, { indent: 2, lineWidth: -1, noRefs: true })
+  return {
+    mode: 'merge',
+    text: `${merged}\n`,
+    warnings: ['删除会重新排版 YAML 并丢失注释；其他条目保留。'],
+  }
+}
+
+/** 在补丁文档数组里定位/创建 llm-pi-ai 条目并写入 provider（同名替换） */
+function applyDshProvider(
+  doc: unknown[],
+  providerKey: string,
+  profile: Record<string, unknown>,
+): void {
+  const entryIndex = doc.findIndex(
     (item) =>
       typeof item === 'object' && item !== null && !Array.isArray(item) &&
       (item as Record<string, unknown>).id === DSH_LLM_PLUGIN_ID,
@@ -389,42 +521,29 @@ export function mergeDshIntoText(
   if (entryIndex < 0) {
     doc.push({
       id: DSH_LLM_PLUGIN_ID,
-      config: { providers: { [ctx.providerKey]: profile } },
+      config: { providers: { [providerKey]: profile } },
     })
-  } else {
-    const raw = doc[entryIndex] as Record<string, unknown>
-    const config =
-      typeof raw.config === 'object' && raw.config !== null && !Array.isArray(raw.config)
-        ? (raw.config as Record<string, unknown>)
-        : raw.config === undefined
-          ? {}
-          : null
-    if (config === null) {
-      throw new DshMergeError(
-        `插件条目 ${DSH_LLM_PLUGIN_ID} 的 config 不是对象，无法并入 provider。`,
-      )
-    }
-    const providers =
-      typeof config.providers === 'object' && config.providers !== null && !Array.isArray(config.providers)
-        ? (config.providers as Record<string, unknown>)
-        : config.providers === undefined
-          ? {}
-          : null
-    if (providers === null) {
-      throw new DshMergeError(
-        `config.providers 不是对象（映射），无法并入 provider。`,
-      )
-    }
-    // 同名键替换、其余保留；其余 config 字段（modelOverrides 等）也不动
-    raw.config = { ...config, providers: { ...providers, [ctx.providerKey]: profile } }
+    return
   }
 
-  const merged = yamlDump(doc, { indent: 2, lineWidth: -1, noRefs: true })
-  return {
-    mode: 'merge',
-    text: `${merged}\n`,
-    warnings: [
-      '并入已有补丁会重新排版 YAML 并丢失文件里的注释；其他插件条目、其他 provider 与字段均保留。',
-    ],
+  const raw = doc[entryIndex] as Record<string, unknown>
+  const config =
+    typeof raw.config === 'object' && raw.config !== null && !Array.isArray(raw.config)
+      ? (raw.config as Record<string, unknown>)
+      : raw.config === undefined
+        ? {}
+        : null
+  if (config === null) {
+    throw new DshMergeError(`插件条目 ${DSH_LLM_PLUGIN_ID} 的 config 不是对象，无法写入。`)
   }
+  const providers =
+    typeof config.providers === 'object' && config.providers !== null && !Array.isArray(config.providers)
+      ? (config.providers as Record<string, unknown>)
+      : config.providers === undefined
+        ? {}
+        : null
+  if (providers === null) {
+    throw new DshMergeError('config.providers 不是对象（映射），无法写入。')
+  }
+  raw.config = { ...config, providers: { ...providers, [providerKey]: profile } }
 }

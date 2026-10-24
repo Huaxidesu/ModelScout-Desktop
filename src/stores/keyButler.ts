@@ -165,6 +165,11 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     entryCount: 0,
     systemKey: false,
   })
+  /**
+   * vault 状态的本地版本号：enable / unlock / disable / refreshVault 前进，
+   * `load()` 用它丢弃「发起时早于本地变更、归来却更晚」的过期状态。
+   */
+  let vaultVersion = 0
   /** 首次加载中 */
   const loading = ref(false)
   /** 批量检测进行中 */
@@ -392,12 +397,29 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
   /** 载入列表与加密保存状态。 */
   async function load(): Promise<void> {
     loading.value = true
+    // vault 状态版本守卫：load 期间若发生了 enable/unlock/disable 等本地变更
+    // （vaultVersion 已前进），晚归来的旧状态不得覆盖新状态 —— 否则界面会
+    // 闪回「未启用」，用户再点一次启用就会撞后端「已经启用」的报错。
+    const versionAtStart = vaultVersion
     try {
       const [list, status] = await Promise.all([keyButlerList(), keyButlerVaultStatus()])
-      entries.value = list
-      vault.value = status
+      if (vaultVersion === versionAtStart) {
+        entries.value = list
+        vault.value = status
+      } else {
+        entries.value = list
+      }
     } finally {
       loading.value = false
+    }
+  }
+
+  /** 仅刷新 vault 状态（不重拉列表）。 */
+  async function refreshVault(): Promise<void> {
+    const versionAtStart = ++vaultVersion
+    const status = await keyButlerVaultStatus()
+    if (vaultVersion === versionAtStart) {
+      vault.value = status
     }
   }
 
@@ -495,25 +517,37 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
 
   /** 启用加密保存（主密码模式）。 */
   async function enableVault(password: string): Promise<void> {
-    vault.value = await keyButlerVaultEnable(password)
+    vaultVersion += 1
+    const status = await keyButlerVaultEnable(password)
+    vaultVersion += 1
+    vault.value = status
     entries.value = await keyButlerList()
   }
 
   /** 启用本地保存（无密码模式：数据密钥由 Windows DPAPI 保护）。 */
   async function enableVaultSystemKey(): Promise<void> {
-    vault.value = await keyButlerVaultEnableSystem()
+    vaultVersion += 1
+    const status = await keyButlerVaultEnableSystem()
+    vaultVersion += 1
+    vault.value = status
     entries.value = await keyButlerList()
   }
 
   /** 解锁密文库。 */
   async function unlockVault(password: string): Promise<void> {
-    vault.value = await keyButlerVaultUnlock(password)
+    vaultVersion += 1
+    const status = await keyButlerVaultUnlock(password)
+    vaultVersion += 1
+    vault.value = status
     entries.value = await keyButlerList()
   }
 
   /** 关闭加密保存。 */
   async function disableVault(): Promise<void> {
-    vault.value = await keyButlerVaultDisable()
+    vaultVersion += 1
+    const status = await keyButlerVaultDisable()
+    vaultVersion += 1
+    vault.value = status
   }
 
   /** 清空全部本地状态（切走页面时可选调用）。 */
@@ -570,6 +604,7 @@ export const useKeyButlerStore = defineStore('keyButler', () => {
     enableVaultSystemKey,
     unlockVault,
     disableVault,
+    refreshVault,
     reset,
   }
 })

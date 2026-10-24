@@ -4,7 +4,7 @@
 //! - 注册插件（剪贴板、打开外部链接），托管全局状态
 //!   （探测的 `AppState` 与 Key 管家的 `KeyButlerState`）；
 //! - setup 阶段初始化模型参数字典、Key 管家前缀表与落盘路径；
-//! - 注册全部命令（探测 7 个 + Key 管家 15 个）。
+//! - 注册全部命令（探测 10 个 + Key 管家 16 个）。
 //!
 //! 按 Tauri v2 结构约定，全部逻辑置于 lib crate（`modelscout_lib`），
 //! `main.rs` 仅做一行调用：移动端目标可复用同一 lib，单元测试可直接
@@ -153,7 +153,8 @@ pub fn run() {
             commands::get_dictionary_info, // 7. 字典自检（辅助）
             commands::inspect_tool_config, // 8. 一键填写：读取目标工具配置
             commands::write_tool_config,   // 9. 一键填写：确认后写入目标配置
-            // ---- Key 管家（Beta）：15 个命令 ----
+            commands::scan_tool_configs,   // 10. 配置管理：扫描全部工具配置
+            // ---- Key 管家（Beta）：16 个命令 ----
             // 函数名必须与前端 COMMAND_NAMES.KEY_BUTLER_* 的字符串值逐字一致
             key_butler::commands::key_butler_import,
             key_butler::commands::key_butler_check,
@@ -169,7 +170,8 @@ pub fn run() {
             key_butler::commands::key_butler_vault_unlock,
             key_butler::commands::key_butler_vault_disable,
             key_butler::commands::key_butler_vault_status,
-            key_butler::commands::key_butler_snapshots
+            key_butler::commands::key_butler_snapshots,
+            key_butler::commands::key_butler_record_probe
         ])
         .run(tauri::generate_context!())
         .expect("ModelScout 启动失败：Tauri 应用初始化异常");

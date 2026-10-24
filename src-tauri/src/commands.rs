@@ -20,7 +20,7 @@ use crate::dictionary;
 use crate::error::{CommandError, ProbeError, ProbeErrorKind};
 use crate::models::{
     ProbeConfig, ProbeRunSummary, ProbeSnapshot, ProbeStage, ProbeStatus, SaveConfigRequest,
-    SaveConfigResult, PingResult, ToolConfigFile, ToolConfigWriteResult,
+    SaveConfigResult, PingResult, ToolConfigFile, ToolConfigScan, ToolConfigWriteResult,
 };
 use crate::probe::{
     self, ApiClient, EngineOptions, RunState,
@@ -705,6 +705,78 @@ pub async fn write_tool_config(
         backup_path,
         bytes_written: bytes,
     })
+}
+
+/// 读取一个配置文件为 `ToolConfigFile`；不存在或读取失败返回 None（跳过）。
+fn read_config_file_quietly(path: &std::path::Path) -> Option<ToolConfigFile> {
+    if !path.is_file() {
+        return None;
+    }
+    let size = std::fs::metadata(path).ok()?.len();
+    if size > TOOL_CONFIG_MAX_BYTES {
+        eprintln!("[ModelScout] 配置扫描跳过超限文件：{}（{size} 字节）", path.display());
+        return None;
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    Some(ToolConfigFile {
+        path: path.to_string_lossy().to_string(),
+        exists: true,
+        content,
+    })
+}
+
+/// 扫描本机的 OpenCode 与 dsh 配置文件（配置管理页「一键识别」的数据源）。
+///
+/// 与 `inspect_tool_config` 的区别：那个按工具返回**单个**目标文件（一键
+/// 填写用），这里返回**全部**能找到的文件 —— OpenCode 的 json/jsonc 都给，
+/// dsh 的每个 profile 各一份。读取失败/超限的文件跳过，不让整次扫描失败。
+#[tauri::command]
+pub async fn scan_tool_configs() -> Result<ToolConfigScan, CommandError> {
+    let home = resolve_home_dir()?;
+
+    // ---- OpenCode：json 与 jsonc 并列存在时都返回 ----
+    let config_root = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home.join(".config"));
+    let opencode_dir = config_root.join("opencode");
+    let mut opencode = Vec::new();
+    for name in ["opencode.json", "opencode.jsonc"] {
+        if let Some(file) = read_config_file_quietly(&opencode_dir.join(name)) {
+            opencode.push(file);
+        }
+    }
+
+    // ---- dsh：每个 profile 的 cordis.patch.yml（web 优先，名称排序）----
+    let dsh_root = std::env::var_os("DSH_HOME")
+        .map(|v| PathBuf::from(v.to_string_lossy().to_string()))
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| expand_tilde(&p.to_string_lossy(), &home))
+        .unwrap_or_else(|| home.join(".dsh"));
+    let mut dsh = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dsh_root.join("profiles")) {
+        let mut names: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().join("cordis.patch.yml").is_file())
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .collect();
+        names.sort();
+        names.sort_by_key(|n| (*n != "web") as u8);
+        for name in names {
+            let path = dsh_root.join("profiles").join(&name).join("cordis.patch.yml");
+            if let Some(file) = read_config_file_quietly(&path) {
+                dsh.push(file);
+            }
+        }
+    }
+
+    eprintln!(
+        "[ModelScout] 配置扫描：OpenCode {} 个文件，dsh {} 个文件",
+        opencode.len(),
+        dsh.len()
+    );
+
+    Ok(ToolConfigScan { opencode, dsh })
 }
 
 // ---- 单元测试（仅覆盖不依赖 Tauri 运行时的纯逻辑） ----

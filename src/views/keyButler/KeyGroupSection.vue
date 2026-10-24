@@ -36,6 +36,8 @@ const emit = defineEmits<{
   (e: 'delete', entry: KeyEntry): void
   (e: 'select', entry: KeyEntry, selected: boolean): void
   (e: 'select-group', ids: string[], selected: boolean): void
+  (e: 'probe', entry: KeyEntry): void
+  (e: 'fill-config', entry: KeyEntry): void
 }>()
 
 /** 组内全部 id */
@@ -97,6 +99,8 @@ function sumText(): string {
       @edit="emit('edit', $event)"
       @delete="emit('delete', $event)"
       @select="(target, value) => emit('select', target, value)"
+      @probe="emit('probe', $event)"
+      @fill-config="emit('fill-config', $event)"
     />
   </section>
 </template>

@@ -688,6 +688,16 @@ pub struct ToolConfigWriteResult {
     pub bytes_written: u64,
 }
 
+/// `scan_tool_configs` 的返回：一次扫出的全部配置文件。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolConfigScan {
+    /// OpenCode 的配置文件（`opencode.json` / `opencode.jsonc`，存在几个给几个）
+    pub opencode: Vec<ToolConfigFile>,
+    /// dsh 各 profile 的 `cordis.patch.yml`（`web` 优先，按名称排序）
+    pub dsh: Vec<ToolConfigFile>,
+}
+
 // ---- 单元测试 ----
 
 #[cfg(test)]

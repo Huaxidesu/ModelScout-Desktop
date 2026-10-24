@@ -12,10 +12,11 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NAlert, NButton, NEmpty, useDialog, useMessage } from 'naive-ui'
 
 import { subscribeKeyButler } from '@/api/events'
-import { ProbeApiError } from '@/api/commands'
+import { listModels, ProbeApiError } from '@/api/commands'
+import { useProbeStore } from '@/stores/probe'
 import { provideListTooltip } from '@/composables/useScrollSafeTooltip'
 import { useKeyButlerStore } from '@/stores/keyButler'
-import type { KeyEntry } from '@/types/contracts'
+import type { KeyEntry, ModelBrief, ModelInfo } from '@/types/contracts'
 
 import KeyToolbar from './KeyToolbar.vue'
 import KeyGroupSection from './KeyGroupSection.vue'
@@ -28,6 +29,93 @@ import BalanceHistoryDrawer from './BalanceHistoryDrawer.vue'
 const store = useKeyButlerStore()
 const message = useMessage()
 const dialog = useDialog()
+
+/** 向上抛出跨页动作（由 App.vue 协调：切页 / 打开一键填写） */
+const emit = defineEmits<{
+  (e: 'launch-probe', entry: KeyEntry): void
+  (e: 'open-fill'): void
+}>()
+
+/** 「填入配置」进行中（拉模型清单时按钮转圈） */
+const fillingConfig = ref(false)
+
+/** ModelBrief（列表接口的轻量条目）→ 全量 ModelInfo（未知项按未探测处理） */
+function briefToModelInfo(brief: ModelBrief): ModelInfo {
+  const declared = brief.declared
+  return {
+    id: brief.id,
+    displayName: brief.displayName || brief.id,
+    ownedBy: brief.ownedBy,
+    created: brief.created,
+    supportsTools:
+      declared?.supportsTools === true ? 'supported'
+      : declared?.supportsTools === false ? 'unsupported'
+      : 'unknown',
+    supportsVision:
+      declared?.supportsVision === true ? 'supported'
+      : declared?.supportsVision === false ? 'unsupported'
+      : 'unknown',
+    supportsStreaming: 'unknown',
+    isReasoning: declared?.supportsReasoning === true,
+    reasoningEvidence: '接口声明（模型清单）',
+    contextLimit: declared?.contextLimit ?? 0,
+    maxOutputLimit: declared?.maxOutputLimit ?? 0,
+    contextLimitSource: 'unknown',
+    maxOutputLimitSource: 'unknown',
+    capsSource: declared?.contextLimit != null ? '接口声明（模型清单）' : '未探测（来自 Key 管家填入）',
+    errors: [],
+    elapsedMs: 0,
+    finalStage: 'pending',
+  }
+}
+
+/**
+ * 「填入配置」：用这条 Key 拉取模型清单 → 注入探测页的预览上下文 →
+ * 打开「一键填写」，让用户选 OpenCode / dsh 写入（复用参数调整与对比预览）。
+ */
+async function fillConfig(entry: KeyEntry): Promise<void> {
+  if (!entry.baseUrl || fillingConfig.value) return
+  let plain = ''
+  try {
+    plain = await store.reveal(entry.id)
+  } catch (error) {
+    message.error(error instanceof ProbeApiError ? error.message : String(error))
+    return
+  }
+  if (!plain) {
+    message.warning('没有取到 Key 内容。')
+    return
+  }
+
+  fillingConfig.value = true
+  try {
+    const probeStore = useProbeStore()
+    Object.assign(probeStore.config, {
+      baseUrl: entry.baseUrl,
+      apiKey: plain,
+      apiKeySource: 'plain' as const,
+      apiKeyEnvVar: '',
+      apiKeyCredential: '',
+    })
+    const result = await listModels(probeStore.config)
+    if (result.models.length === 0) {
+      message.warning('该端点没有返回任何模型；请检查 Base URL 或 Key 后重试。', { duration: 6000 })
+      return
+    }
+    probeStore.models = result.models.map(briefToModelInfo)
+    probeStore.selectedIds = probeStore.models.map((m) => m.id)
+    probeStore.hasRun = true
+    message.success(
+      `已用 ${entry.maskedKey} 获取到 ${result.models.length} 个模型，选择目标工具写入配置`,
+      { duration: 5000 },
+    )
+    emit('open-fill')
+  } catch (error) {
+    message.error(error instanceof ProbeApiError ? error.message : String(error))
+  } finally {
+    fillingConfig.value = false
+  }
+}
 
 /* ---- 对话框状态 ---- */
 
@@ -97,6 +185,17 @@ function toggleSelect(entry: KeyEntry, selected: boolean): void {
 function openHistory(entry: KeyEntry): void {
   historyEntry.value = entry
   showHistory.value = true
+}
+
+/**
+ * 用某条 Key 发起探测：交给 App.vue 协调（切页 + 预填 + 启动 + 回写结果）。
+ */
+function launchProbe(entry: KeyEntry): void {
+  if (!entry.baseUrl) {
+    message.warning('这条 Key 还没有设置 Base URL，先点「编辑」补一个。', { duration: 5000 })
+    return
+  }
+  emit('launch-probe', entry)
 }
 
 /** 打开编辑对话框 */
@@ -228,6 +327,8 @@ const rowTooltips = provideListTooltip()
           @delete="confirmDelete"
           @select="toggleSelect"
           @select-group="store.setSelected"
+          @probe="launchProbe"
+          @fill-config="fillConfig"
         />
 
         <NEmpty

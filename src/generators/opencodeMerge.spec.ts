@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest'
 import type { ModelInfo } from '@/types/contracts'
 import { parseJsonc } from '@/utils/jsonc'
 
-import { mergeOpenCodeIntoText } from './opencodeMerge'
+import { mergeOpenCodeIntoText, removeOpenCodeProvider, upsertOpenCodeProvider } from './opencodeMerge'
 import type { GenerateContext } from './opencode'
 
 function makeModel(id: string, overrides: Partial<ModelInfo> = {}): ModelInfo {
@@ -131,15 +131,89 @@ describe('mergeOpenCodeIntoText —— 已有配置并入', () => {
     const result = mergeOpenCodeIntoText(existing, makeContext())
     expect(result.mode).toBe('splice')
     expect(result.text).toContain('// 只有 mcp 配置')
-    const parsed = parseJsonc(result.text) as Record<string, unknown>
+    const parsed = parseJsonc(result.text) as {
+      mcp: unknown
+      provider: Record<string, unknown>
+    }
     expect(parsed.mcp).toEqual({ fetch: { command: 'uvx' } })
-    expect(parsed.provider).toBeDefined()
+    // 必须是 provider -> my-gateway -> 条目 的两层结构
+    expect(parsed.provider['my-gateway']).toBeDefined()
   })
 
   it('模型 ID 含引号等特殊字符时输出仍可解析', () => {
     const result = mergeOpenCodeIntoText('', makeContext({
       models: [makeModel('we"ird\\id', {})],
     }))
+    expect(() => parseJsonc(result.text)).not.toThrow()
+  })
+
+  it('v2 文件（providers 容器）：按 v2 键名写入并转换字段', () => {
+    // opencode 2 的真实形态（2026-10 迁移）：providers/package/settings/modelID
+    const v2File = `{
+  "plugins": ["x"],
+  "providers": {
+    "existing": { "package": "aisdk:@ai-sdk/anthropic", "settings": { "baseURL": "https://a" } }
+  }
+}`
+    const result = mergeOpenCodeIntoText(v2File, makeContext())
+    expect(result.mode).toBe('splice')
+
+    const parsed = parseJsonc(result.text) as {
+      providers: Record<string, Record<string, unknown>>
+      plugins: unknown
+    }
+    // 写进的是 v2 容器,而不是另起一个 v1 的 provider 键
+    expect(parsed.providers).toBeDefined()
+    expect(Object.keys(parsed.providers)).toEqual(['existing', 'my-gateway'])
+    expect(parsed.plugins).toEqual(['x'])
+
+    const merged = parsed.providers['my-gateway'] as {
+      package: string
+      settings: Record<string, string>
+      models: Record<string, Record<string, unknown>>
+    }
+    expect(merged.package).toBe('aisdk:@ai-sdk/openai-compatible')
+    expect(merged.settings.baseURL).toBe('https://api.example.com/v1')
+    expect(merged.settings.apiKey).toBe('sk-test-key')
+    const model = merged.models['deepseek-chat'] as Record<string, unknown>
+    expect(model.modelID).toBe('deepseek-chat')
+    expect((model.capabilities as Record<string, unknown>).tools).toBe(true)
+  })
+})
+
+describe('基础信息注释（providerComment）', () => {
+  it('插入新 provider 时在键上方带注释行,输出仍可解析', () => {
+    const existing = '{"mcp": {}}'
+    const result = mergeOpenCodeIntoText(existing, makeContext(), {
+      providerComment: 'My Gateway · 1 个模型 · ModelScout 2026-10-25',
+    })
+    expect(result.mode).toBe('splice')
+    expect(result.text).toContain('// My Gateway · 1 个模型 · ModelScout 2026-10-25')
+    expect(() => parseJsonc(result.text)).not.toThrow()
+  })
+
+  it('同名替换时更新已有标记注释而不是堆积', () => {
+    const first = mergeOpenCodeIntoText(
+      '{"mcp": {}}',
+      makeContext(),
+      { providerComment: '名字A · 1 个模型 · ModelScout 2026-10-25' },
+    )
+    const second = mergeOpenCodeIntoText(
+      first.text,
+      makeContext(),
+      { providerComment: '名字B · 2 个模型 · ModelScout 2026-10-26' },
+    )
+    expect(second.text).toContain('名字B')
+    expect(second.text).not.toContain('名字A')
+    expect(second.text.match(/ModelScout 2026/g)?.length).toBe(1)
+    expect(() => parseJsonc(second.text)).not.toThrow()
+  })
+
+  it('新建文件的顶部注释在最外层大括号之前', () => {
+    const result = mergeOpenCodeIntoText('', makeContext(), {
+      providerComment: 'Info · 1 个模型 · ModelScout',
+    })
+    expect(result.text.startsWith('// Info')).toBe(true)
     expect(() => parseJsonc(result.text)).not.toThrow()
   })
 })
@@ -151,5 +225,53 @@ describe('mergeOpenCodeIntoText —— 异常输入', () => {
 
   it('顶层是数组抛 MergeError', () => {
     expect(() => mergeOpenCodeIntoText('[1, 2]', makeContext())).toThrow(/顶层/)
+  })
+})
+
+describe('upsertOpenCodeProvider / removeOpenCodeProvider（配置管理页）', () => {
+  const existing = `{
+  // 保留我
+  "provider": {
+    "keep-me": { "npm": "@ai-sdk/openai-compatible" },
+    "edit-me": { "npm": "old", "options": { "baseURL": "https://old/v1" } }
+  }
+}`
+
+  it('upsert 替换同名 provider，保留注释与其他条目', () => {
+    const result = upsertOpenCodeProvider(existing, 'edit-me', {
+      npm: 'new',
+      options: { baseURL: 'https://new/v1', apiKey: 'sk-x' },
+    })
+    expect(result.mode).toBe('splice')
+    expect(result.text).toContain('// 保留我')
+    const parsed = parseJsonc(result.text) as { provider: Record<string, Record<string, unknown>> }
+    expect(Object.keys(parsed.provider)).toEqual(['keep-me', 'edit-me'])
+    expect((parsed.provider['edit-me'].options as Record<string, unknown>).apiKey).toBe('sk-x')
+  })
+
+  it('upsert 不存在的键则追加', () => {
+    const result = upsertOpenCodeProvider(existing, 'brand-new', { npm: 'x' })
+    const parsed = parseJsonc(result.text) as { provider: Record<string, unknown> }
+    expect(Object.keys(parsed.provider)).toEqual(['keep-me', 'edit-me', 'brand-new'])
+  })
+
+  it('remove 摘除 provider，不留双逗号，注释保留', () => {
+    const result = removeOpenCodeProvider(existing, 'edit-me')
+    expect(result).not.toBeNull()
+    expect(result!.text).not.toContain(',,')
+    expect(result!.text).toContain('// 保留我')
+    const parsed = parseJsonc(result!.text) as { provider: Record<string, unknown> }
+    expect(Object.keys(parsed.provider)).toEqual(['keep-me'])
+  })
+
+  it('remove 中间成员时同样合法', () => {
+    const three = '{"provider": {"a": {}, "b": {}, "c": {}}}'
+    const result = removeOpenCodeProvider(three, 'b')
+    const parsed = parseJsonc(result!.text) as { provider: Record<string, unknown> }
+    expect(Object.keys(parsed.provider)).toEqual(['a', 'c'])
+  })
+
+  it('remove 不存在的键返回 null', () => {
+    expect(removeOpenCodeProvider(existing, 'ghost')).toBeNull()
   })
 })

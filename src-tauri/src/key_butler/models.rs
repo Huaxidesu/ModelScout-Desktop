@@ -211,6 +211,16 @@ pub struct KeyEntry {
     /// 因此按 Key 记录。导入时按平台给默认值（见
     /// `platform_prefixes.json` 的 `defaultBaseUrl`），用户可逐条修改。
     pub base_url: Option<String>,
+    /// 最近一次「从 Key 管家发起探测」的完成时间（Unix 毫秒）；`None` = 从未发起
+    #[serde(default)]
+    pub last_probe_at: Option<u64>,
+    /// 最近一次探测的终态：`done` / `failed` / `cancelled`（与探测模块
+    /// `ProbeStatus` 的终态子集一致）；`None` = 从未发起
+    #[serde(default)]
+    pub last_probe_status: Option<String>,
+    /// 最近一次探测拿到全量信息的模型数量；失败或中止时为 `None`
+    #[serde(default)]
+    pub last_probe_models: Option<usize>,
 }
 
 /// 一条余额快照。

@@ -379,6 +379,20 @@ export interface ToolConfigWriteResult {
   bytesWritten: number
 }
 
+/**
+ * `scan_tool_configs` 命令的返回。
+ * 对应 Rust 结构体：`models::ToolConfigScan`
+ *
+ * 配置管理页「一键识别」的数据源：一次扫出本机能找到的全部
+ * OpenCode / dsh 配置文件（读取失败或超限的文件被跳过）。
+ */
+export interface ToolConfigScan {
+  /** OpenCode 的配置文件（json / jsonc 存在几个给几个） */
+  opencode: ToolConfigFile[]
+  /** dsh 各 profile 的 cordis.patch.yml（web 优先，按名称排序） */
+  dsh: ToolConfigFile[]
+}
+
 // ---- 事件 payload 结构体 ----
 /**
  * 事件 `probe://progress` 的 payload。
@@ -522,6 +536,8 @@ export const COMMAND_NAMES = {
   INSPECT_TOOL_CONFIG: 'inspect_tool_config',
   /** 一键填写：用户确认后把合并结果写入目标配置文件 */
   WRITE_TOOL_CONFIG: 'write_tool_config',
+  /** 配置管理：扫描本机全部 OpenCode/dsh 配置文件 */
+  SCAN_TOOL_CONFIGS: 'scan_tool_configs',
   /* ---- Key 管家（Beta）：全部带 key_butler_ 前缀，避免与探测命令冲突 ---- */
   /** 批量文本 → 提取 Key → 前缀识别 → 入列（去重） */
   KEY_BUTLER_IMPORT: 'key_butler_import',
@@ -553,6 +569,8 @@ export const COMMAND_NAMES = {
   KEY_BUTLER_VAULT_STATUS: 'key_butler_vault_status',
   /** 查询某 Key 的余额快照序列 */
   KEY_BUTLER_SNAPSHOTS: 'key_butler_snapshots',
+  /** 记录一次「从 Key 管家发起的探测」的结果（终态 + 模型数） */
+  KEY_BUTLER_RECORD_PROBE: 'key_butler_record_probe',
 } as const
 
 /** 命令名联合类型 */
@@ -661,6 +679,12 @@ export interface KeyEntry {
   customEndpoint: BalanceEndpoint | null
   /** 该 Key 的 Base URL（有效性检测与余额查询都需要）；`null` = 未设置 */
   baseUrl: string | null
+  /** 最近一次「从 Key 管家发起探测」的完成时间（Unix 毫秒）；`null` = 从未发起 */
+  lastProbeAt: number | null
+  /** 最近一次探测的终态：`done` / `failed` / `cancelled`；`null` = 从未发起 */
+  lastProbeStatus: string | null
+  /** 最近一次探测拿到全量信息的模型数量；失败或中止时为 `null` */
+  lastProbeModels: number | null
 }
 
 /**

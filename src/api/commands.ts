@@ -29,6 +29,7 @@ import type {
   SaveConfigResult,
   Snapshot,
   ToolConfigFile,
+  ToolConfigScan,
   ToolConfigWriteResult,
   VaultStatus,
 } from '@/types/contracts'
@@ -225,6 +226,17 @@ export function writeToolConfig(
 }
 
 /**
+ * 扫描本机全部 OpenCode / dsh 配置文件。
+ *
+ * 对应 Rust：`commands::scan_tool_configs`
+ *
+ * 配置管理页「一键识别」的数据源；读取失败或超过 1 MiB 的文件会被跳过。
+ */
+export function scanToolConfigs(): Promise<ToolConfigScan> {
+  return call<ToolConfigScan>(COMMAND_NAMES.SCAN_TOOL_CONFIGS)
+}
+
+/**
  * 读取内置字典条目数，用于「关于」区域展示数据新鲜度。
  *
  * 该命令未列入 COMMAND_NAMES 常量表，但同样必须与 lib.rs 的注册名一致。
@@ -329,4 +341,25 @@ export function keyButlerVaultStatus(): Promise<VaultStatus> {
 /** 查询某条 Key 的余额快照序列（按时间升序）。 */
 export function keyButlerSnapshots(keyId: string): Promise<Snapshot[]> {
   return call<Snapshot[]>(COMMAND_NAMES.KEY_BUTLER_SNAPSHOTS, { keyId })
+}
+
+/**
+ * 记录一次「从 Key 管家发起的探测」的结果。
+ *
+ * 对应 Rust：`key_butler::commands::key_butler_record_probe`
+ *
+ * @param id         Key 条目 id
+ * @param status     探测终态：`done` / `failed` / `cancelled`
+ * @param modelCount 拿到全量信息的模型数；失败/中止传 null
+ */
+export function keyButlerRecordProbe(
+  id: string,
+  status: string,
+  modelCount: number | null,
+): Promise<KeyEntry[]> {
+  return call<KeyEntry[]>(COMMAND_NAMES.KEY_BUTLER_RECORD_PROBE, {
+    id,
+    status,
+    modelCount,
+  })
 }

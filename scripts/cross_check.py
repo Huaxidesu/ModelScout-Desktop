@@ -118,6 +118,7 @@ PAIRS = [
     ("SaveConfigResult", "SaveConfigResult"),
     ("ToolConfigFile", "ToolConfigFile"),
     ("ToolConfigWriteResult", "ToolConfigWriteResult"),
+    ("ToolConfigScan", "ToolConfigScan"),
 ]
 
 # Key 管家（Beta）的契约在独立文件里（模块隔离原则），

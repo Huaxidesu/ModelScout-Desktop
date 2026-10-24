@@ -112,7 +112,7 @@ async function enable(): Promise<void> {
     password.value = ''
     confirmPassword.value = ''
   } catch (error) {
-    message.error(error instanceof ProbeApiError ? error.message : String(error))
+    await handleEnableError(error)
   } finally {
     busy.value = false
   }
@@ -127,10 +127,36 @@ async function enableSystemKey(): Promise<void> {
     message.success('已启用无密码保存 —— 数据仍是加密的，只是不需要你输入密码')
     closeNotice()
   } catch (error) {
-    message.error(error instanceof ProbeApiError ? error.message : String(error))
+    if (await handleEnableError(error)) closeNotice()
   } finally {
     busy.value = false
   }
+}
+
+/**
+ * 处理启用失败。
+ *
+ * 「本地保存已经启用」单独对待：它几乎总意味着界面状态过期（后端已启用、
+ * 前端还停在未启用表单 —— 典型触发是启动时的状态加载晚于用户操作返回）。
+ * 此时按已启用收尾并刷新状态，而不是把一条用户无法行动的报错甩给用户。
+ *
+ * @returns 是否应视为「已启用」收尾（关闭注意事项弹窗）
+ */
+async function handleEnableError(error: unknown): Promise<boolean> {
+  const text = error instanceof ProbeApiError ? error.message : String(error)
+  if (text.includes('已经启用')) {
+    try {
+      await store.refreshVault()
+    } catch {
+      // 刷新失败也不升级为报错：保持当前状态，让用户重开对话框再看
+    }
+    if (store.vault.enabled) {
+      message.info('本地保存其实已经启用了，界面状态已刷新。')
+      return true
+    }
+  }
+  message.error(text)
+  return false
 }
 
 /** 解锁 */

@@ -250,6 +250,9 @@ fn build_entry_with(
         balance_endpoint,
         custom_endpoint: None,
         base_url,
+        last_probe_at: None,
+        last_probe_status: None,
+        last_probe_models: None,
     }
 }
 
@@ -811,6 +814,41 @@ pub async fn key_butler_update_note(
     let found = state
         .update(&id, move |entry| {
             entry.note = note;
+        })
+        .await;
+    if !found {
+        return Err(CommandError::invalid_input("找不到该 Key。"));
+    }
+    state
+        .persist_if_enabled()
+        .await
+        .map_err(CommandError::internal)?;
+
+    Ok(state.entries().await)
+}
+
+/// 记录一次「从 Key 管家发起的探测」的结果。
+///
+/// 探测本身在探测模块跑，这里只把终态回写到对应 Key 上，
+/// 让 Key 列表能显示「最近探测：成功 12 个模型 / 失败」。
+#[tauri::command]
+pub async fn key_butler_record_probe(
+    state: State<'_, KeyButlerState>,
+    id: String,
+    status: String,
+    model_count: Option<usize>,
+) -> Result<Vec<KeyEntry>, CommandError> {
+    state
+        .ensure_writable()
+        .await
+        .map_err(CommandError::invalid_input)?;
+
+    let stamp = now_ms();
+    let found = state
+        .update(&id, move |entry| {
+            entry.last_probe_at = Some(stamp);
+            entry.last_probe_status = Some(status);
+            entry.last_probe_models = model_count;
         })
         .await;
     if !found {

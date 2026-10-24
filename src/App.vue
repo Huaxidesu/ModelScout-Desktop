@@ -28,7 +28,11 @@ import ProgressPanel from '@/components/ProgressPanel.vue'
 import ModelTable from '@/components/ModelTable.vue'
 import ConfigPreview from '@/components/ConfigPreview.vue'
 import KeyButlerView from '@/views/keyButler/KeyButlerView.vue'
+import ConfigManagerView from '@/views/configManager/ConfigManagerView.vue'
 import { useProbe } from '@/composables/useProbe'
+import { useKeyButlerStore } from '@/stores/keyButler'
+import { keyButlerRecordProbe } from '@/api/commands'
+import type { KeyEntry } from '@/types/contracts'
 
 // ---- 主题覆盖：把 style.css 设计令牌映射到 Naive UI themeOverrides，统一视觉 ----
 const themeOverrides: GlobalThemeOverrides = {
@@ -121,16 +125,20 @@ const showConfig = ref(false)
 /** 「关于」弹窗是否显示（由 AppHeader 的入口触发） */
 const showAbout = ref(false)
 
-// ---- 顶部 Tab：探测 / Key 管家（Beta） ----
+// ---- 顶部 Tab：探测 / 配置管理 / Key 管家（Beta） ----
 // 用 v-show 而非 v-if 切换：v-if 会在每次切 Tab 时整体卸载重建探测页组件，
 // 丢失滚动位置与展开状态；v-show 仅切换 display。
-const activeTab = ref<'probe' | 'keyButler'>('probe')
+const activeTab = ref<'probe' | 'config' | 'keyButler'>('probe')
 
 /** Tab 定义（beta 为 true 时在文案后附加 Beta 徽标） */
 const TABS = [
   { value: 'probe' as const, label: '探测', beta: false },
+  { value: 'config' as const, label: '配置管理', beta: false },
   { value: 'keyButler' as const, label: 'Key 管家', beta: true },
 ]
+
+/** 一键填写对话框的外部触发器（时间戳；Key 管家「填入配置」后置位） */
+const quickFillTrigger = ref(0)
 
 /**
  * 配置预览是否放大到全屏。
@@ -142,8 +150,63 @@ const TABS = [
  */
 const configMaximized = ref(false)
 
+/** Key 管家「填入配置」注入模型后的收尾：切页 + 打开预览 + 弹出一键填写 */
+function openFillFromKeyButler(): void {
+  activeTab.value = 'probe'
+  showConfig.value = true
+  quickFillTrigger.value = Date.now()
+}
+
 /** 组合式函数：内部已注册 onUnmounted 清理，这里只需触发订阅建立 */
 const probe = useProbe()
+
+/** Key 管家 store（跨页协调：从 Key 管家发起探测） */
+const keyButler = useKeyButlerStore()
+
+/**
+ * 用 Key 管家里的某条密钥发起一次完整探测。
+ *
+ * 流程（对应需求「Key 管家选择密钥发起探测、记录探测结果」）：
+ *   1. reveal 拿到明文（瞬态使用，不落任何状态）；
+ *   2. 预填探测配置（Base URL 来自 Key 条目，来源切回明文）并切到探测页；
+ *   3. 启动探测；结束后把终态与模型数回写到这条 Key 上。
+ */
+async function launchProbeFromKey(entry: KeyEntry): Promise<void> {
+  if (!entry.baseUrl) return
+  if (probe.store.isRunning) {
+    // 已有探测在跑：不抢占（预填会污染正在进行的上下文），切过去看进度
+    activeTab.value = 'probe'
+    return
+  }
+  let plain = ''
+  try {
+    plain = await keyButler.reveal(entry.id)
+  } catch (error) {
+    console.error('[ModelScout] 读取 Key 失败：', error)
+    return
+  }
+  if (!plain) return
+
+  const config = probe.store.config
+  config.baseUrl = entry.baseUrl
+  config.apiKey = plain
+  config.apiKeySource = 'plain'
+  config.apiKeyEnvVar = ''
+  config.apiKeyCredential = ''
+  activeTab.value = 'probe'
+  showConfig.value = false
+
+  await probe.start()
+
+  // 回写探测结果（done 时带模型数；failed/cancelled 只记状态）
+  const status = probe.store.status
+  const modelCount = status === 'done' ? probe.store.models.length : null
+  try {
+    keyButler.entries = await keyButlerRecordProbe(entry.id, status, modelCount)
+  } catch (error) {
+    console.error('[ModelScout] 回写探测结果失败：', error)
+  }
+}
 
 onMounted(async () => {
   await probe.setupSubscriptions()
@@ -304,6 +367,7 @@ const statusLabel = computed(
                   v-if="showConfig && !configMaximized"
                   class="min-h-0 flex-1"
                   :probe="probe"
+                  :fill-trigger="quickFillTrigger"
                   @close="closeConfigPreview"
                   @toggle-maximize="toggleConfigMaximize"
                 />
@@ -311,10 +375,17 @@ const statusLabel = computed(
             </div>
           </div>
 
+          <!-- ---- 主体：配置管理 ---- -->
+          <ConfigManagerView v-show="activeTab === 'config'" />
+
           <!-- ---- 主体：Key 管家（Beta） ---- -->
           <!-- v-show 切换以保留列表、过滤条件与抽屉展开状态；
             Key 管家自带底部状态汇总条，全局状态栏仅属于探测页。 -->
-          <KeyButlerView v-show="activeTab === 'keyButler'" />
+          <KeyButlerView
+              v-show="activeTab === 'keyButler'"
+              @launch-probe="launchProbeFromKey"
+              @open-fill="openFillFromKeyButler"
+            />
 
           <!-- ---- 状态栏（仅探测页） ---- -->
           <footer
@@ -357,6 +428,7 @@ const statusLabel = computed(
               class="min-h-0 flex-1"
               :probe="probe"
               maximized
+              :fill-trigger="quickFillTrigger"
               @close="closeConfigPreview"
               @toggle-maximize="toggleConfigMaximize"
             />

@@ -29,6 +29,7 @@ import {
 } from 'naive-ui'
 
 import { useProbe } from '@/composables/useProbe'
+import { useKeyButlerStore } from '@/stores/keyButler'
 import { extractConnection, maskSecret, type ExtractResult } from '@/utils/parseConnection'
 import type { ApiKeySource } from '@/types/contracts'
 
@@ -38,6 +39,53 @@ const props = defineProps<{
 }>()
 
 const message = useMessage()
+
+/** Key 管家（存入密钥用；跨模块读全局 store，不写探测状态） */
+const keyButler = useKeyButlerStore()
+
+/** 存入 Key 管家进行中 */
+const savingKey = ref(false)
+
+/**
+ * 把当前的 Base URL + API Key 一键存入 Key 管家。
+ *
+ * 前提（需求约定）：Key 管家已开启本地保存 —— 未开启时给出引导而不是
+ * 静默落到内存表（用户会以为已经保存了，关掉应用就没了）。
+ * 仅明文来源可存：环境变量 / 凭据管理器模式下前端拿不到明文。
+ */
+async function saveToKeyButler(): Promise<void> {
+  const cfg = props.probe.store.config
+  const key = cfg.apiKey.trim()
+  if (!key) return
+
+  if (!keyButler.vault.enabled) {
+    message.warning(
+      '请先在「Key 管家」开启本地保存（主密码或无密码模式），再使用一键加入。',
+      { duration: 6000 },
+    )
+    return
+  }
+
+  savingKey.value = true
+  try {
+    const before = new Set(keyButler.entries.map((e) => e.id))
+    const result = await keyButler.importKeys({ text: key })
+    if (result.added === 0) {
+      message.info('这条 Key 已经在 Key 管家里了。')
+      return
+    }
+    // 补上 Base URL：识别平台推的默认端点不一定对，连接表单里填的才是真实端点
+    const added = keyButler.entries.filter((e) => !before.has(e.id))
+    if (added.length === 1 && cfg.baseUrl.trim()) {
+      await keyButler.setConfig(added[0].id, { baseUrl: cfg.baseUrl.trim() })
+    }
+    message.success(`已存入 Key 管家（${added[0]?.maskedKey ?? '新条目'}）`)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+  } finally {
+    savingKey.value = false
+  }
+}
 
 /** 是否显示 API Key 明文 */
 const revealKey = ref(false)
@@ -448,6 +496,22 @@ function clearRecognize(): void {
       >
         探测范围：{{ scopeLabel }}
       </NButton>
+
+      <NTooltip trigger="hover" style="max-width: 340px">
+        <template #trigger>
+          <NButton
+            size="small"
+            ghost
+            :disabled="disabled || keySource !== 'plain' || !probe.store.config.apiKey.trim()"
+            :loading="savingKey"
+            @click="saveToKeyButler()"
+          >
+            存入 Key 管家
+          </NButton>
+        </template>
+        把当前 Base URL + API Key 存进 Key 管家长期管理（需先在 Key 管家开启本地保存）。
+        仅「明文」来源可存；环境变量 / 凭据管理器模式下密钥不经过前端。
+      </NTooltip>
 
       <div class="flex-1" />
 
