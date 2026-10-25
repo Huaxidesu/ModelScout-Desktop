@@ -11,7 +11,7 @@
  * 所有写盘动作复用一键填写的基础设施（write_tool_config + 自动备份）。
  */
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   NAlert,
   NButton,
@@ -24,7 +24,7 @@ import {
 } from 'naive-ui'
 
 import { ProbeApiError } from '@/api/commands'
-import { scanToolConfigs, writeToolConfig } from '@/api/commands'
+import { deleteEnvSecret, listEnvSecrets, scanToolConfigs, statusEnvSecret, writeToolConfig } from '@/api/commands'
 import {
   parseDshProviders,
   parseOpenCodeProviders,
@@ -36,9 +36,11 @@ import {
 } from '@/generators/configScan'
 import { removeOpenCodeProvider, upsertOpenCodeProvider } from '@/generators/opencodeMerge'
 import { mergeDshProfileIntoText, removeDshProvider } from '@/generators/dsh'
+import { collectEnvVarRefs, missingEnvVars, type EnvRefSource } from '@/utils/envRefs'
 import { useKeyButlerStore } from '@/stores/keyButler'
 import ProviderEditDialog from './ProviderEditDialog.vue'
-import type { ToolConfigFile } from '@/types/contracts'
+import EnvSecretDialog from './EnvSecretDialog.vue'
+import type { EnvSecretInfo, ToolConfigFile } from '@/types/contracts'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -131,7 +133,140 @@ async function scan(): Promise<void> {
 onMounted(() => {
   // 首次进入自动扫一遍：这个页面的价值就在于「打开就能看到现状」
   void scan()
+  // 环境变量清单一并加载（本地命令，无磁盘扫描）
+  void loadEnvSecrets()
 })
+
+/* ---- 环境变量密钥子模块 ---- */
+
+/** 本机疑似密钥的环境变量（掩码展示） */
+const envSecrets = ref<EnvSecretInfo[]>([])
+/** 清单加载中 */
+const envLoading = ref(false)
+
+/** 加载环境变量密钥清单 */
+async function loadEnvSecrets(): Promise<void> {
+  envLoading.value = true
+  try {
+    envSecrets.value = await listEnvSecrets()
+  } catch (error) {
+    message.error(error instanceof ProbeApiError ? error.message : String(error))
+  } finally {
+    envLoading.value = false
+  }
+}
+
+/** 全部 provider 的环境变量引用：变量名 → 引用来源列表 */
+const envRefs = computed(() =>
+  collectEnvVarRefs(
+    opencodeGroups.value.flatMap((g) => g.entries),
+    dshGroups.value.flatMap((g) => g.entries),
+  ),
+)
+
+/** 变量名 → 可读的引用方描述（「OpenCode:shusheng」） */
+function refsLabel(name: string): string[] {
+  return (envRefs.value.get(name) ?? []).map((r: EnvRefSource) =>
+    r.tool === 'opencode' ? `OpenCode:${r.providerKey}` : `dsh:${r.providerKey}`,
+  )
+}
+
+/** 引用了、且经精确检查确认存在的非清单变量名（不进缺失提醒） */
+const refNamesExisting = ref<Set<string>>(new Set())
+
+// 清单按「疑似密钥」命名启发式过滤，配置引用的变量（如 MY_KEY）未必在
+// 清单里 —— 对清单外的引用名逐一做精确存在性检查，避免误报缺失。
+watch(envRefs, (refs) => {
+  const known = new Set(envSecrets.value.map((s) => s.name))
+  const toCheck = [...refs.keys()].filter((n) => !known.has(n))
+  const existing = new Set<string>()
+  void Promise.all(
+    toCheck.map(async (n) => {
+      try {
+        const status = await statusEnvSecret(n)
+        if (status.exists) existing.add(n)
+      } catch {
+        /* 查不了就按不存在处理（下一轮 watch 会再试） */
+      }
+    }),
+  ).then(() => {
+    refNamesExisting.value = existing
+  })
+})
+
+/** 配置引用了、但本机还不存在的变量（需要创建才能生效） */
+const missingRefVars = computed(() =>
+  missingEnvVars(envRefs.value, [
+    ...envSecrets.value.map((s) => s.name),
+    ...refNamesExisting.value,
+  ]),
+)
+
+/** 编辑/新建对话框状态 */
+const envDialogShow = ref(false)
+/** 锁定的变量名（编辑已有引用时不可改） */
+const envDialogLockName = ref(false)
+const envDialogInitialName = ref('')
+const envDialogTitle = ref('')
+/** picker 模式（只选名字）当前未用，保留给后续 */
+const envDialogRef = ref<InstanceType<typeof EnvSecretDialog> | null>(null)
+
+function openEnvCreate(name = ''): void {
+  envDialogLockName.value = false
+  envDialogInitialName.value = name
+  envDialogTitle.value = name ? `创建环境变量 ${name}` : '新建环境变量密钥'
+  envDialogShow.value = true
+}
+
+function openEnvEdit(secret: EnvSecretInfo): void {
+  envDialogLockName.value = false
+  envDialogInitialName.value = secret.name
+  envDialogTitle.value = `覆盖环境变量 ${secret.name}`
+  envDialogShow.value = true
+}
+
+/** 从 provider 行联动：编辑它引用的环境变量（名字锁定） */
+function openEnvEditRef(name: string): void {
+  envDialogLockName.value = true
+  envDialogInitialName.value = name
+  envDialogTitle.value = `编辑环境变量 ${name}`
+  envDialogShow.value = true
+}
+
+/** 保存成功后的统一提示（区分进程内生效与持久化） */
+function onEnvSaved(name: string): void {
+  const note = envDialogRef.value?.savedNote
+  if (note && !note.persisted && note.note) {
+    message.warning(`${name}：${note.note}`, { duration: 8000 })
+  } else {
+    message.success(
+      `${name} 已保存：本应用内立即生效${note?.persisted ? '，系统持久环境已更新（新开的程序可读）' : ''}。`,
+      { duration: 6000 },
+    )
+  }
+  void loadEnvSecrets()
+}
+
+function confirmEnvDelete(secret: EnvSecretInfo): void {
+  const refs = refsLabel(secret.name)
+  dialog.warning({
+    title: `删除环境变量 ${secret.name}？`,
+    content:
+      (refs.length > 0 ? `配置里正被 ${refs.join('、')} 引用，删除后这些配置会失效。` : '') +
+      '会同时从本应用与 Windows 用户级持久环境中移除，无法恢复。',
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await deleteEnvSecret(secret.name)
+        message.success(`${secret.name} 已删除`)
+        await loadEnvSecrets()
+      } catch (error) {
+        message.error(error instanceof ProbeApiError ? error.message : String(error))
+      }
+    },
+  })
+}
 
 /* ---- Key 管家联动：配置 → Key 管家 ---- */
 
@@ -390,6 +525,19 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
             </NTag>
             <NTag size="tiny" :bordered="false">{{ entry.modelIds.length }} 个模型</NTag>
             <span class="ml-auto flex items-center gap-1.5">
+              <NTooltip v-if="entry.apiKey.mode === 'env'" trigger="hover">
+                <template #trigger>
+                  <NButton
+                    size="tiny"
+                    quaternary
+                    type="info"
+                    @click="openEnvEditRef(entry.apiKey.envVar)"
+                  >
+                    编辑变量
+                  </NButton>
+                </template>
+                直接修改环境变量 {{ entry.apiKey.envVar }} 的值（本应用内立即生效 + 写入系统持久环境）。
+              </NTooltip>
               <NTooltip v-if="entry.apiKey.mode === 'plain'" trigger="hover">
                 <template #trigger>
                   <NButton size="tiny" quaternary type="primary" @click="addToKeyButler(entry)">
@@ -398,7 +546,7 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
                 </template>
                 把这个 provider 里的明文 Key 导入 Key 管家（自动带上 Base URL）。
               </NTooltip>
-              <NTooltip v-else trigger="hover">
+              <NTooltip v-if="entry.apiKey.mode !== 'plain'" trigger="hover">
                 <template #trigger>
                   <NButton size="tiny" quaternary disabled>加入 Key 管家</NButton>
                 </template>
@@ -444,6 +592,14 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
             </NTag>
             <NTag size="tiny" :bordered="false">{{ entry.modelIds.length }} 个模型</NTag>
             <span class="ml-auto flex items-center gap-1.5">
+              <NTooltip v-if="entry.apiKeyEnv" trigger="hover">
+                <template #trigger>
+                  <NButton size="tiny" quaternary type="info" @click="openEnvEditRef(entry.apiKeyEnv)">
+                    编辑变量
+                  </NButton>
+                </template>
+                直接修改环境变量 {{ entry.apiKeyEnv }} 的值（本应用内立即生效 + 写入系统持久环境）。
+              </NTooltip>
               <NTooltip trigger="hover">
                 <template #trigger>
                   <NButton size="tiny" quaternary disabled>加入 Key 管家</NButton>
@@ -467,6 +623,73 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
         </div>
       </section>
 
+      <!-- 环境变量密钥子模块 -->
+      <section class="mb-3">
+        <div class="mb-1 flex flex-wrap items-center gap-2">
+          <NTag size="small" :bordered="false" type="warning">环境变量密钥</NTag>
+          <span class="text-[11px] text-ms-text-faint">
+            本机疑似密钥的环境变量（值只显示掩码）；配置里的
+            <code>{env:…}</code> 引用与此联动
+          </span>
+          <span class="ml-auto flex items-center gap-1.5">
+            <NButton size="tiny" quaternary type="primary" @click="openEnvCreate()">
+              新建变量
+            </NButton>
+            <NButton size="tiny" quaternary :loading="envLoading" @click="loadEnvSecrets()">
+              刷新
+            </NButton>
+          </span>
+        </div>
+
+        <!-- 配置引用了但本机没有的变量：联动创建入口 -->
+        <NAlert
+          v-if="missingRefVars.length > 0"
+          type="warning"
+          :bordered="false"
+          class="mb-1"
+          style="border-radius: 0"
+        >
+          <template #header><span class="text-[11px]">配置引用了 {{ missingRefVars.length }} 个本机不存在的环境变量</span></template>
+          <div class="flex flex-wrap items-center gap-2 text-[11px] leading-relaxed">
+            <span v-for="name in missingRefVars" :key="name" class="flex items-center gap-1">
+              <code class="text-ms-warning">{{ name }}</code>
+              <span class="text-ms-text-faint">← {{ refsLabel(name).join('、') || '未知来源' }}</span>
+              <NButton size="tiny" quaternary type="warning" @click="openEnvCreate(name)">
+                创建
+              </NButton>
+            </span>
+          </div>
+        </NAlert>
+
+        <div class="ms-panel overflow-hidden">
+          <div
+            v-for="secret in envSecrets"
+            :key="secret.name"
+            class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ms-border px-3 py-2 last:border-b-0 hover:bg-white/[0.02]"
+          >
+            <span class="min-w-[180px] font-mono text-[12px] text-ms-accent">{{ secret.name }}</span>
+            <span class="font-mono text-[11px] text-ms-text-dim">{{ secret.preview }}</span>
+            <NTag size="tiny" :bordered="false" :type="secret.persisted ? 'success' : 'default'">
+              {{ secret.persisted ? '已持久化' : '仅本程序' }}
+            </NTag>
+            <span v-if="refsLabel(secret.name).length > 0" class="text-[10px] text-ms-text-faint">
+              被 {{ refsLabel(secret.name).join('、') }} 引用
+            </span>
+            <span class="ml-auto flex items-center gap-1.5">
+              <NButton size="tiny" quaternary @click="openEnvEdit(secret)">编辑</NButton>
+              <NButton size="tiny" quaternary type="error" @click="confirmEnvDelete(secret)">删除</NButton>
+            </span>
+          </div>
+          <div v-if="envSecrets.length === 0 && !envLoading" class="px-3 py-4 text-center text-[11px] text-ms-text-faint">
+            没有发现疑似密钥的环境变量（名字含 API_KEY / APIKEY，或以 _TOKEN / _SECRET 结尾）。
+            点「新建变量」可直接创建。
+          </div>
+          <div v-if="envLoading && envSecrets.length === 0" class="px-3 py-4 text-center text-[11px] text-ms-text-faint">
+            正在读取环境变量…
+          </div>
+        </div>
+      </section>
+
     </div>
 
     <!-- 编辑 provider(模型参数)对话框 -->
@@ -477,6 +700,16 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
       :provider-key="editTarget?.providerKey ?? ''"
       :content="fileContent(editTarget?.path ?? '')"
       @saved="onEdited"
+    />
+
+    <!-- 环境变量密钥 编辑/新建 对话框 -->
+    <EnvSecretDialog
+      ref="envDialogRef"
+      v-model:show="envDialogShow"
+      :title="envDialogTitle"
+      :initial-name="envDialogInitialName"
+      :lock-name="envDialogLockName"
+      @saved="onEnvSaved"
     />
 
     <!-- 绑定密钥对话框 -->

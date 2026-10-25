@@ -154,6 +154,10 @@ pub fn run() {
             commands::inspect_tool_config, // 8. 一键填写：读取目标工具配置
             commands::write_tool_config,   // 9. 一键填写：确认后写入目标配置
             commands::scan_tool_configs,   // 10. 配置管理：扫描全部工具配置
+            commands::env_secret_list,     // 11. 配置管理：环境变量密钥清单（掩码）
+            commands::env_secret_set,      // 12. 配置管理：写入/覆盖环境变量密钥
+            commands::env_secret_delete,   // 13. 配置管理：删除环境变量密钥
+            commands::env_secret_status,   // 14. 配置管理：单变量精确存在性（联动校验）
             // ---- Key 管家（Beta）：16 个命令 ----
             // 函数名必须与前端 COMMAND_NAMES.KEY_BUTLER_* 的字符串值逐字一致
             key_butler::commands::key_butler_import,

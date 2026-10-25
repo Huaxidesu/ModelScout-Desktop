@@ -19,8 +19,9 @@ use tokio::sync::Mutex;
 use crate::dictionary;
 use crate::error::{CommandError, ProbeError, ProbeErrorKind};
 use crate::models::{
-    ProbeConfig, ProbeRunSummary, ProbeSnapshot, ProbeStage, ProbeStatus, SaveConfigRequest,
-    SaveConfigResult, PingResult, ToolConfigFile, ToolConfigScan, ToolConfigWriteResult,
+    EnvSecretInfo, EnvSecretStatus, EnvSecretWriteResult, ProbeConfig, ProbeRunSummary,
+    ProbeSnapshot, ProbeStage, ProbeStatus, SaveConfigRequest, SaveConfigResult, PingResult,
+    ToolConfigFile, ToolConfigScan, ToolConfigWriteResult,
 };
 use crate::probe::{
     self, ApiClient, EngineOptions, RunState,
@@ -779,6 +780,232 @@ pub async fn scan_tool_configs() -> Result<ToolConfigScan, CommandError> {
     Ok(ToolConfigScan { opencode, dsh })
 }
 
+// ---- env_secret_list / env_secret_set / env_secret_delete：环境变量密钥管理 ----
+
+/// 环境变量值写入用户级持久环境的上限（setx 的硬限制）。
+const ENV_SECRET_MAX_VALUE: usize = 1024;
+
+/// 判断一个环境变量名是否「疑似密钥」。
+///
+/// 命名启发式（全大写惯例下）：名字里带 `API_KEY` / `APIKEY`，或以
+/// `_TOKEN` / `_SECRET` 结尾。`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、
+/// `GITHUB_TOKEN` 这类都会命中；`PATH`、`HOME` 不会。
+fn is_secret_candidate(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    upper.contains("API_KEY") || upper.contains("APIKEY") || upper.ends_with("_TOKEN") || upper.ends_with("_SECRET")
+}
+
+/// 把密钥值打成掩码预览：长值保留首尾各 4 字符，短值整体打码。
+///
+/// 后端对密钥的唯一展示形态 —— 任何命令都不向前端返回完整值。
+fn mask_secret(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let n = chars.len();
+    if n == 0 {
+        return String::new();
+    }
+    if n <= 8 {
+        return "*".repeat(n);
+    }
+    let head: String = chars[..4].iter().collect();
+    let tail: String = chars[n - 4..].iter().collect();
+    format!("{}…{}", head, tail)
+}
+
+/// 校验环境变量名（写入/删除前调用）：字母或下划线开头，只含字母数字下划线。
+fn validate_env_name(name: &str) -> Result<(), CommandError> {
+    let valid = !name.is_empty()
+        && name.len() <= 253
+        && name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if valid {
+        Ok(())
+    } else {
+        Err(CommandError::invalid_input(format!(
+            "环境变量名「{name}」不合法：须以字母或下划线开头，只含字母、数字、下划线。"
+        )))
+    }
+}
+
+/// 枚举 Windows 用户级持久环境变量的名字（HKCU\Environment）。
+///
+/// 用于区分「本进程恰好有」与「已持久化」：进程环境可能来自启动本应用
+/// 的父进程，未必写进了注册表。非 Windows 返回空集合（持久化判定仅在
+/// Windows 提供，其他平台一律视为未持久化）。
+#[cfg(windows)]
+fn user_env_names() -> Vec<String> {
+    let output = spawn_windows_tool("reg", &["query", r"HKCU\Environment"]);
+    let Ok(output) = output else { return Vec::new() };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut names = Vec::new();
+    for line in text.lines() {
+        // 输出行形如 "    NAME    REG_SZ    value"（值可能为空、类型可能 REG_EXPAND_SZ）
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with("HKEY_") {
+            continue;
+        }
+        if let Some(name) = trimmed.split_whitespace().next() {
+            if !name.is_empty() {
+                names.push(name.to_string());
+            }
+        }
+    }
+    names
+}
+
+#[cfg(not(windows))]
+fn user_env_names() -> Vec<String> {
+    Vec::new()
+}
+
+/// 以 CREATE_NO_WINDOW 运行一个 Windows 自带工具（reg / setx），
+/// 避免闪出控制台窗口。非 Windows 平台没有调用方。
+#[cfg(windows)]
+fn spawn_windows_tool(program: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new(program)
+        .args(args)
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output()
+}
+
+/// 非 Windows 的占位：调用方都在 `if cfg!(windows)` 分支里，永不触达；
+/// 保留签名让代码在所有平台都能编译。
+#[cfg(not(windows))]
+fn spawn_windows_tool(_program: &str, _args: &[&str]) -> std::io::Result<std::process::Output> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Windows-only"))
+}
+
+/// `env_secret_list`：枚举本机疑似密钥的环境变量（掩码展示）。
+///
+/// 只报告当前进程可见的变量（用户级 + 系统级 + 启动时继承）；
+/// `persisted` 标记它是否同时存在于用户级持久环境。
+/// 同步命令（Tauri 在工作线程池执行）：内部有一次注册表查询的阻塞调用。
+#[tauri::command]
+pub async fn env_secret_list() -> Result<Vec<EnvSecretInfo>, CommandError> {
+    // 同步命令在 Tauri 里跑在主线程,而 reg query / setx 都可能因
+    // WM_SETTINGCHANGE 广播阻塞数秒 —— 一律丢进阻塞线程池,不让 UI 卡住。
+    tauri::async_runtime::spawn_blocking(|| {
+        let persisted_names: std::collections::HashSet<String> =
+            user_env_names().into_iter().collect();
+
+        let mut items: Vec<EnvSecretInfo> = std::env::vars()
+            .filter(|(name, value)| is_secret_candidate(name) && !value.is_empty())
+            .map(|(name, value)| {
+                let length = value.chars().count();
+                EnvSecretInfo {
+                    persisted: persisted_names.contains(&name),
+                    name,
+                    preview: mask_secret(&value),
+                    length,
+                }
+            })
+            .collect();
+
+        items.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+        Ok(items)
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("环境变量清单任务失败：{e}")))?
+}
+
+/// `env_secret_set`：写入/覆盖一个环境变量密钥。
+///
+/// 双写：`std::env::set_var` 让**本应用**（探测、连通测试走后端进程）
+/// 立即可用；Windows 再用 `setx` 写用户级持久环境，**新开的**程序
+/// （opencode / dsh / 终端）重启后才能读到 —— 注意正在运行的程序不会
+/// 热更新。值超过 setx 的 1024 字符限制时仅本进程生效并在 note 说明。
+#[tauri::command]
+pub async fn env_secret_set(name: String, value: String) -> Result<EnvSecretWriteResult, CommandError> {
+    validate_env_name(&name)?;
+    if value.is_empty() {
+        return Err(CommandError::invalid_input("密钥值不能为空。"));
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        std::env::set_var(&name, &value);
+
+        let mut result = EnvSecretWriteResult {
+            process_set: true,
+            persisted: false,
+            note: String::new(),
+        };
+
+        if cfg!(windows) {
+            if value.chars().count() > ENV_SECRET_MAX_VALUE {
+                result.note = format!(
+                    "值超过 {ENV_SECRET_MAX_VALUE} 字符（setx 上限），仅本应用内生效，未写入系统持久环境。"
+                );
+                return Ok(result);
+            }
+            match spawn_windows_tool("setx", &[&name, &value]) {
+                Ok(out) if out.status.success() => result.persisted = true,
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    result.note = format!("本应用内已生效；写入系统持久环境失败：{}", stderr.trim());
+                }
+                Err(err) => {
+                    result.note = format!("本应用内已生效；写入系统持久环境失败：{err}");
+                }
+            }
+        } else {
+            result.note = "本应用内已生效；当前平台不写 shell 配置，其他程序请自行 export。".to_string();
+        }
+
+        eprintln!("[ModelScout] 环境变量已设置：{}（持久化：{}）", name, result.persisted);
+        Ok(result)
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("环境变量写入任务失败：{e}")))?
+}
+
+/// `env_secret_delete`：删除一个环境变量密钥。
+///
+/// 同时清掉本进程变量与用户级持久环境（Windows 注册表）；删除不校验
+/// 是否存在 —— 幂等。注意引用它的配置（`{env:NAME}`）会失效，界面层负责确认。
+#[tauri::command]
+pub async fn env_secret_delete(name: String) -> Result<(), CommandError> {
+    validate_env_name(&name)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        std::env::remove_var(&name);
+
+        if cfg!(windows) {
+            let _ = spawn_windows_tool("reg", &["delete", r"HKCU\Environment", "/v", &name, "/f"]);
+        }
+        eprintln!("[ModelScout] 环境变量已删除：{}", name);
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("环境变量删除任务失败：{e}")))
+}
+
+/// `env_secret_status`：查询单个环境变量的精确存在性（掩码展示）。
+///
+/// 「疑似密钥清单」按命名启发式过滤，配置里引用的变量（如 `MY_KEY`）
+/// 不一定在清单里 —— 判断「机器上到底有没有」以本命令为准。
+#[tauri::command]
+pub async fn env_secret_status(name: String) -> Result<EnvSecretStatus, CommandError> {
+    validate_env_name(&name)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let persisted = user_env_names().iter().any(|n| n == &name);
+        match std::env::var(&name) {
+            Ok(value) if !value.is_empty() => Ok(EnvSecretStatus {
+                exists: true,
+                persisted,
+                preview: mask_secret(&value),
+                length: value.chars().count() as u64,
+            }),
+            _ => Ok(EnvSecretStatus {
+                exists: false,
+                persisted,
+                preview: String::new(),
+                length: 0,
+            }),
+        }
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("环境变量状态任务失败：{e}")))?
+}
+
 // ---- 单元测试（仅覆盖不依赖 Tauri 运行时的纯逻辑） ----
 
 #[cfg(test)]
@@ -938,5 +1165,56 @@ mod tests {
                 None => std::env::remove_var(self.key),
             }
         }
+    }
+}
+
+// ---- 环境变量密钥管理的纯逻辑单测 ----
+
+#[cfg(test)]
+mod env_secret_tests {
+    use super::{is_secret_candidate, mask_secret, validate_env_name};
+
+    #[test]
+    fn secret_candidate_matches_api_key_names() {
+        assert!(is_secret_candidate("OPENAI_API_KEY"));
+        assert!(is_secret_candidate("deepseek_api_key"));
+        assert!(is_secret_candidate("MY_APIKEY"));
+        assert!(is_secret_candidate("GITHUB_TOKEN"));
+        assert!(is_secret_candidate("AWS_SECRET"));
+        assert!(is_secret_candidate("API_KEY"));
+        assert!(!is_secret_candidate("PATH"));
+        assert!(!is_secret_candidate("HOME"));
+        assert!(!is_secret_candidate("EDITOR"));
+        // _KEY 结尾但不是 API_KEY：不误报
+        assert!(!is_secret_candidate("SSH_KEY"));
+    }
+
+    #[test]
+    fn mask_keeps_only_head_and_tail_for_long_values() {
+        assert_eq!(mask_secret("sk-1234567890abcdefgh"), "sk-1…efgh");
+        assert_eq!(mask_secret("sk-ms-test-1234567890abcd"), "sk-m…abcd");
+    }
+
+    #[test]
+    fn mask_fully_hides_short_values_and_never_reveals_full() {
+        assert_eq!(mask_secret(""), "");
+        assert_eq!(mask_secret("short"), "*****");
+        assert_eq!(mask_secret("12345678"), "********");
+        // 9 字符：长值规则，首尾各 4（重叠也不可能露出全部 9 位）
+        assert_eq!(mask_secret("123456789"), "1234…6789");
+    }
+
+    #[test]
+    fn env_name_validation() {
+        assert!(validate_env_name("OPENAI_API_KEY").is_ok());
+        assert!(validate_env_name("_PRIVATE").is_ok());
+        assert!(validate_env_name("a1_B").is_ok());
+        assert!(validate_env_name("").is_err());
+        assert!(validate_env_name("1ABC").is_err());
+        assert!(validate_env_name("HAS SPACE").is_err());
+        assert!(validate_env_name("DASH-BAD").is_err());
+        // 命令注入类输入必须被拒
+        assert!(validate_env_name("A;calc").is_err());
+        assert!(validate_env_name("A&b").is_err());
     }
 }

@@ -698,6 +698,53 @@ pub struct ToolConfigScan {
     pub dsh: Vec<ToolConfigFile>,
 }
 
+// ---- 七、环境变量密钥管理 ----
+
+/// `env_secret_list` 的条目：一个疑似密钥的环境变量。
+///
+/// 出于脱敏考虑，后端**永不**返回完整值，只有掩码预览。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvSecretInfo {
+    /// 变量名
+    pub name: String,
+    /// 掩码预览（如 `sk-1…abcd`；短值整体打码）
+    pub preview: String,
+    /// 值长度（字符数）
+    pub length: usize,
+    /// 是否已持久化到用户级环境变量（Windows：HKCU\Environment）
+    pub persisted: bool,
+}
+
+/// `env_secret_set` 的返回。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvSecretWriteResult {
+    /// 后端进程内已生效（本应用的探测/连通测试立即可用）
+    pub process_set: bool,
+    /// 已写入用户级持久环境（新开的终端/程序可读取；Windows 走 setx）
+    pub persisted: bool,
+    /// 面向用户的补充说明（空串 = 无）
+    pub note: String,
+}
+
+/// `env_secret_status` 的返回：单个变量的精确存在性。
+///
+/// 用于联动校验：配置引用的变量名未必命中「疑似密钥」命名启发式
+/// （如 `MY_KEY`），清单里看不到不代表机器上没有 —— 以此命令为准。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvSecretStatus {
+    /// 本进程可见且值非空
+    pub exists: bool,
+    /// 是否已持久化到用户级环境变量
+    pub persisted: bool,
+    /// 掩码预览（不存在时为空串）
+    pub preview: String,
+    /// 值长度（不存在时为 0）
+    pub length: u64,
+}
+
 // ---- 单元测试 ----
 
 #[cfg(test)]

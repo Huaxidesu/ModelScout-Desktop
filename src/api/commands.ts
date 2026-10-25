@@ -12,6 +12,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { COMMAND_NAMES } from '@/types/contracts'
 import type {
+  EnvSecretInfo,
+  EnvSecretStatus,
+  EnvSecretWriteResult,
   KeyBatchPatch,
   KeyCheckRequest,
   KeyCheckSummary,
@@ -362,4 +365,43 @@ export function keyButlerRecordProbe(
     status,
     modelCount,
   })
+}
+
+// ---- 环境变量密钥管理（配置管理子模块） ----
+
+/**
+ * 枚举本机疑似密钥的环境变量（掩码展示，永不返回完整值）。
+ *
+ * 对应 Rust：`commands::env_secret_list`
+ */
+export function listEnvSecrets(): Promise<EnvSecretInfo[]> {
+  return call<EnvSecretInfo[]>(COMMAND_NAMES.ENV_SECRET_LIST)
+}
+
+/**
+ * 写入/覆盖一个环境变量密钥。
+ *
+ * 对应 Rust：`commands::env_secret_set`。双写语义：本应用内（后端进程）
+ * 立即生效；Windows 再用 setx 写用户级持久环境，**新开的**程序才能读到。
+ */
+export function setEnvSecret(name: string, value: string): Promise<EnvSecretWriteResult> {
+  return call<EnvSecretWriteResult>(COMMAND_NAMES.ENV_SECRET_SET, { name, value })
+}
+
+/**
+ * 删除一个环境变量密钥（进程内 + 用户级持久环境，幂等）。
+ *
+ * 对应 Rust：`commands::env_secret_delete`
+ */
+export function deleteEnvSecret(name: string): Promise<void> {
+  return call<void>(COMMAND_NAMES.ENV_SECRET_DELETE, { name })
+}
+
+/**
+ * 查询单个环境变量的精确存在性（清单启发式之外，联动校验用）。
+ *
+ * 对应 Rust：`commands::env_secret_status`
+ */
+export function statusEnvSecret(name: string): Promise<EnvSecretStatus> {
+  return call<EnvSecretStatus>(COMMAND_NAMES.ENV_SECRET_STATUS, { name })
 }

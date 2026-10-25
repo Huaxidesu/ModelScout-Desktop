@@ -119,6 +119,9 @@ PAIRS = [
     ("ToolConfigFile", "ToolConfigFile"),
     ("ToolConfigWriteResult", "ToolConfigWriteResult"),
     ("ToolConfigScan", "ToolConfigScan"),
+    ("EnvSecretInfo", "EnvSecretInfo"),
+    ("EnvSecretWriteResult", "EnvSecretWriteResult"),
+    ("EnvSecretStatus", "EnvSecretStatus"),
 ]
 
 # Key 管家（Beta）的契约在独立文件里（模块隔离原则），

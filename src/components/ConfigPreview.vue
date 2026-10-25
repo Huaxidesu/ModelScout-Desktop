@@ -36,6 +36,7 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { useProbe } from '@/composables/useProbe'
 import { inspectToolConfig, saveConfigFile } from '@/api/commands'
 import QuickFillDialog from '@/components/QuickFillDialog.vue'
+import EnvSecretDialog from '@/views/configManager/EnvSecretDialog.vue'
 import {
   renderOpenCodeJsonc,
   renderOpenCodeJson,
@@ -190,6 +191,19 @@ const envVarName = computed<string>({
     envVarOverride.value = value
   },
 })
+
+/** 「🔑 一键用环境变量」：切到 env 写法（变量名用当前推断/已填值） */
+function useEnvKeyMode(): void {
+  apiKeyMode.value = 'env'
+}
+
+/** 「✎ 编辑变量名」对话框（内含本机已有变量补全） */
+const envNameDialogShow = ref(false)
+
+/** 变量名确认后写回（推断值被显式覆盖） */
+function onEnvNamePicked(name: string): void {
+  envVarOverride.value = name
+}
 
 /**
  * 键名变化时，让仍处于自动推断状态的从属字段跟着更新。
@@ -857,15 +871,39 @@ watch(
             { label: '环境变量引用', value: 'env' },
           ]"
         />
-        <NInput
-          v-if="apiKeyMode === 'env'"
-          v-model:value="envVarName"
-          size="tiny"
-          placeholder="DEEPSEEK_LOCAL_API_KEY"
-          style="width: 210px"
-        />
+        <!-- 一键环境变量模式：不离开键盘就切到 {env:…} 引用 -->
+        <NTooltip trigger="hover" style="max-width: 300px">
+          <template #trigger>
+            <NButton
+              size="tiny"
+              :quaternary="apiKeyMode !== 'env'"
+              :type="apiKeyMode === 'env' ? 'primary' : 'default'"
+              @click="useEnvKeyMode()"
+            >
+              🔑 一键用环境变量
+            </NButton>
+          </template>
+          一键把密钥写法切换为环境变量引用（配置里写 {env:变量名}，密钥本体不落盘）。
+          变量名默认按 provider 键名推断，可用旁边的 ✎ 修改或直接选用本机已有变量。
+        </NTooltip>
+        <template v-if="apiKeyMode === 'env'">
+          <NInput
+            v-model:value="envVarName"
+            size="tiny"
+            placeholder="DEEPSEEK_LOCAL_API_KEY"
+            style="width: 190px"
+            spellcheck="false"
+          />
+          <!-- 编辑变量名：可选本机已有变量（与环境变量密钥管理联动） -->
+          <NTooltip trigger="hover" style="max-width: 280px">
+            <template #trigger>
+              <NButton size="tiny" quaternary @click="envNameDialogShow = true">✎</NButton>
+            </template>
+            编辑环境变量名：可从本机已有的疑似密钥变量里选（自动补全），或输入新名字。
+          </NTooltip>
+        </template>
         <!-- 密钥来自环境变量 / 凭据管理器：展示来源，不再提示「未填 Key」 -->
-        <NTooltip v-else-if="keySourceLabel" trigger="hover">
+        <NTooltip v-if="apiKeyMode !== 'env' && keySourceLabel" trigger="hover">
           <template #trigger>
             <NTag size="tiny" :bordered="false" type="info">{{ keySourceLabel }}</NTag>
           </template>
@@ -1056,6 +1094,15 @@ watch(
       :context="effectiveContext"
       :preferred-version="quickFillTool === 'opencode' ? opencodeVersion : undefined"
       @written="onQuickFillWritten"
+    />
+
+    <!-- ---------- 环境变量名编辑（✎，含本机已有变量补全） ---------- -->
+    <EnvSecretDialog
+      v-model:show="envNameDialogShow"
+      title="环境变量名"
+      picker
+      :initial-name="envVarName"
+      @saved="onEnvNamePicked"
     />
   </section>
 </template>

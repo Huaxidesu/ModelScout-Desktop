@@ -393,6 +393,40 @@ export interface ToolConfigScan {
   dsh: ToolConfigFile[]
 }
 
+/** 环境变量密钥条目（env_secret_list 的元素；后端永不返回完整值） */
+export interface EnvSecretInfo {
+  /** 变量名 */
+  name: string
+  /** 掩码预览（如 `sk-1…abcd`；短值整体打码） */
+  preview: string
+  /** 值长度（字符数） */
+  length: number
+  /** 是否已持久化到用户级环境变量（Windows：HKCU\Environment） */
+  persisted: boolean
+}
+
+/** env_secret_set 的返回 */
+export interface EnvSecretWriteResult {
+  /** 后端进程内已生效（本应用的探测/连通测试立即可用） */
+  processSet: boolean
+  /** 已写入用户级持久环境（新开的终端/程序可读取） */
+  persisted: boolean
+  /** 面向用户的补充说明（空串 = 无） */
+  note: string
+}
+
+/** env_secret_status 的返回：单个变量的精确存在性 */
+export interface EnvSecretStatus {
+  /** 本进程可见且值非空 */
+  exists: boolean
+  /** 是否已持久化到用户级环境变量 */
+  persisted: boolean
+  /** 掩码预览（不存在时为空串） */
+  preview: string
+  /** 值长度（不存在时为 0） */
+  length: number
+}
+
 // ---- 事件 payload 结构体 ----
 /**
  * 事件 `probe://progress` 的 payload。
@@ -538,6 +572,14 @@ export const COMMAND_NAMES = {
   WRITE_TOOL_CONFIG: 'write_tool_config',
   /** 配置管理：扫描本机全部 OpenCode/dsh 配置文件 */
   SCAN_TOOL_CONFIGS: 'scan_tool_configs',
+  /** 配置管理：枚举本机疑似密钥的环境变量（掩码展示） */
+  ENV_SECRET_LIST: 'env_secret_list',
+  /** 配置管理：写入/覆盖一个环境变量密钥（进程内 + Windows 用户级持久） */
+  ENV_SECRET_SET: 'env_secret_set',
+  /** 配置管理：删除一个环境变量密钥（进程内 + 用户级持久） */
+  ENV_SECRET_DELETE: 'env_secret_delete',
+  /** 配置管理：单个变量的精确存在性（清单启发式之外） */
+  ENV_SECRET_STATUS: 'env_secret_status',
   /* ---- Key 管家（Beta）：全部带 key_butler_ 前缀，避免与探测命令冲突 ---- */
   /** 批量文本 → 提取 Key → 前缀识别 → 入列（去重） */
   KEY_BUTLER_IMPORT: 'key_butler_import',
