@@ -462,3 +462,303 @@ export function validateNoPlaceholders(output: string): string[] {
   }
   return problems
 }
+
+// ============================================================================
+// OpenCode V2（opencode 2，2026-10 新 schema）
+// ============================================================================
+//
+// 结构对照（依据官方 schema https://opencode.ai/config.json 的
+// `Config.ProviderEncoded` / `Config.ModelEncoded` / `Config.Model.Capabilities`）：
+//
+//   providers.<key> = {
+//     package:  "aisdk:@ai-sdk/openai-compatible"   // npm → package，加 aisdk: 前缀
+//     name?:    string
+//     settings: { apiKey?, baseURL }                 // options → settings
+//     models:   { [模型 ID]: ModelEntryV2 }
+//   }
+//
+//   ModelEntryV2 = {
+//     modelID:      string                           // id → modelID
+//     name?:        string
+//     capabilities?: {
+//       tools?:       boolean
+//       input?:       string[]                       // ["text"] / ["text","image"]
+//       output?:      string[]
+//       temperature?: boolean                        // 是否支持温度参数
+//       reasoning?:   {                               // v1 的布尔 reasoning 升级成对象
+//         supported: boolean                          //   必填
+//         toggle?:    boolean                         //   界面里可开关思考
+//         effort?:    string[]                        //   支持的强度档位（自由字符串）
+//         budget?:    { min?: number; max?: number }  //   思考预算范围（token）
+//       }
+//     }
+//     limit?: { context?: number; input?: number; output?: number }  // 三字段均可选
+//   }
+
+/** v2 的 capabilities.reasoning（推理能力声明） */
+export interface OpenCodeV2Reasoning {
+  /** 必填：是否支持推理/思考 */
+  supported: boolean
+  /** 可选：允许在 opencode 界面里开关思考 */
+  toggle?: boolean
+  /** 可选：该模型支持的强度档位（自由字符串，如 low/medium/high） */
+  effort?: string[]
+  /** 可选：思考预算范围（token 数） */
+  budget?: { min?: number; max?: number }
+}
+
+/** v2 的单个模型条目（Config.ModelEncoded 中本工具管理的字段子集） */
+export interface OpenCodeV2ModelEntry {
+  modelID: string
+  name?: string
+  capabilities?: {
+    tools?: boolean
+    input?: string[]
+    output?: string[]
+    temperature?: boolean
+    reasoning?: OpenCodeV2Reasoning
+  }
+  limit?: {
+    context?: number
+    input?: number
+    output?: number
+  }
+}
+
+/** v2 的单个 provider 条目 */
+export interface OpenCodeV2Provider {
+  /** SDK 包名（v2 需加 `aisdk:` 前缀） */
+  package: string
+  name?: string
+  settings: {
+    apiKey?: string
+    baseURL: string
+  }
+  models: Record<string, OpenCodeV2ModelEntry>
+}
+
+/** 完整的 OpenCode V2 配置对象 */
+export interface OpenCodeV2Config {
+  $schema?: string
+  providers: Record<string, OpenCodeV2Provider>
+}
+
+/**
+ * v2 独有的可调参数（「参数调整」区里 v1 没有的字段）。
+ *
+ * 这些字段没有 ModelInfo 对应物，走独立的 side-channel：
+ * 生成/合并时按模型 ID 查表叠加到 v2 模型条目上。
+ */
+export interface OpenCodeV2Extras {
+  /** 推理强度档位；undefined = 不写该字段 */
+  effort?: string[]
+  /** 思考预算下限；undefined = 不写 */
+  budgetMin?: number
+  /** 思考预算上限；undefined = 不写 */
+  budgetMax?: number
+  /** capabilities.temperature；undefined = 不写 */
+  temperature?: boolean
+  /** limit.input（输入侧上限）；undefined = 不写 */
+  inputLimit?: number
+}
+
+/** 模型 ID → v2 附加参数 */
+export type OpenCodeV2ExtrasMap = Record<string, OpenCodeV2Extras>
+
+/**
+ * 生成 v2 单个模型条目。
+ *
+ * 与 v1 的 buildModelEntry 同一套三态语义（unknown 省略字段）；
+ * extras 里给出的 v2 独有字段按需叠加。
+ */
+export function buildV2ModelEntry(
+  model: ModelInfo,
+  extras?: OpenCodeV2Extras,
+): OpenCodeV2ModelEntry {
+  const entry: OpenCodeV2ModelEntry = {
+    modelID: model.id,
+    name: model.displayName && model.displayName !== model.id ? model.displayName : model.id,
+  }
+
+  const caps: NonNullable<OpenCodeV2ModelEntry['capabilities']> = { output: ['text'] }
+  if (model.supportsTools === 'supported') caps.tools = true
+  else if (model.supportsTools === 'unsupported') caps.tools = false
+  if (model.supportsVision === 'supported') caps.input = ['text', 'image']
+  else if (model.supportsVision === 'unsupported') caps.input = ['text']
+  if (extras?.temperature !== undefined) caps.temperature = extras.temperature
+
+  // reasoning：模型本身是推理模型、或用户配置了任何 v2 推理参数 → 写对象
+  const hasExtras =
+    (extras?.effort?.length ?? 0) > 0 ||
+    extras?.budgetMin !== undefined ||
+    extras?.budgetMax !== undefined
+  if (model.isReasoning || hasExtras) {
+    const reasoning: OpenCodeV2Reasoning = { supported: true }
+    if (extras?.effort?.length) {
+      reasoning.effort = [...extras.effort]
+      reasoning.toggle = true
+    }
+    const budget: { min?: number; max?: number } = {}
+    if (extras?.budgetMin !== undefined) budget.min = extras.budgetMin
+    if (extras?.budgetMax !== undefined) budget.max = extras.budgetMax
+    if (budget.min !== undefined || budget.max !== undefined) reasoning.budget = budget
+    caps.reasoning = reasoning
+  }
+  entry.capabilities = caps
+
+  // limit：v2 三字段均可选；保持与 v1 相同的习惯（context/output 成对），
+  // input 只在用户明确给出时写
+  if (model.contextLimit > 0 || model.maxOutputLimit > 0 || extras?.inputLimit !== undefined) {
+    const limit: NonNullable<OpenCodeV2ModelEntry['limit']> = {}
+    if (model.contextLimit > 0 || model.maxOutputLimit > 0) {
+      limit.context = model.contextLimit > 0 ? model.contextLimit : DEFAULT_CONTEXT
+      limit.output = model.maxOutputLimit > 0 ? model.maxOutputLimit : DEFAULT_OUTPUT
+    }
+    if (extras?.inputLimit !== undefined) limit.input = extras.inputLimit
+    entry.limit = limit
+  }
+
+  return entry
+}
+
+/** 构造完整的 OpenCode V2 配置对象 */
+export function buildOpenCodeV2Config(
+  context: GenerateContext,
+  extras?: OpenCodeV2ExtrasMap,
+): OpenCodeV2Config {
+  const ctx = resolveContext(context)
+
+  const models: Record<string, OpenCodeV2ModelEntry> = {}
+  for (const model of ctx.models) {
+    models[model.id] = buildV2ModelEntry(model, extras?.[model.id])
+  }
+
+  const settings: OpenCodeV2Provider['settings'] = { baseURL: ctx.baseUrl }
+  if (ctx.apiKeyField) settings.apiKey = ctx.apiKeyField
+
+  return {
+    $schema: 'https://opencode.ai/config.json',
+    providers: {
+      [ctx.providerKey]: {
+        package: `aisdk:${ctx.pkg}`,
+        name: ctx.providerName,
+        settings,
+        models,
+      },
+    },
+  }
+}
+
+/** 渲染 v2 provider 的内部键值（不含外层 `"providers": {` / `}`） */
+function providerV2BodyLines(
+  ctx: ResolvedContext,
+  extras: OpenCodeV2ExtrasMap | undefined,
+  keyIndent: number,
+): string[] {
+  const k = keyIndent
+  const pad = (n: number) => ' '.repeat(n)
+  const lines: string[] = []
+
+  lines.push(`${pad(k)}"${escapeJsonString(ctx.providerKey)}": {`)
+  lines.push(`${pad(k + 2)}"name": "${escapeJsonString(ctx.providerName)}",`)
+  lines.push(`${pad(k + 2)}"package": "aisdk:${escapeJsonString(ctx.pkg)}",`)
+  lines.push(`${pad(k + 2)}"settings": {`)
+  if (ctx.apiKeyField) {
+    lines.push(`${pad(k + 4)}"apiKey": "${escapeJsonString(ctx.apiKeyField)}",`)
+  }
+  lines.push(`${pad(k + 4)}"baseURL": "${escapeJsonString(ctx.baseUrl)}"`)
+  lines.push(`${pad(k + 2)}},`)
+  lines.push('')
+  lines.push(`${pad(k + 2)}"models": {`)
+
+  ctx.models.forEach((model, index) => {
+    const entry = buildV2ModelEntry(model, extras?.[model.id])
+    const isLast = index === ctx.models.length - 1
+    lines.push(
+      `${pad(k + 4)}"${escapeJsonString(model.id)}": ${stringifyEntry(entry, k + 4)}${isLast ? '' : ','}`,
+    )
+  })
+
+  lines.push(`${pad(k + 2)}}`)
+  lines.push(`${pad(k)}}`)
+
+  return lines
+}
+
+/** v2 完整配置的 JSONC 头部注释（与 v1 renderOpenCodeJsonc 同风格） */
+function v2HeaderLines(ctx: ResolvedContext): string[] {
+  const now = new Date().toISOString()
+  const lines: string[] = []
+  lines.push('  // ===================================================================')
+  lines.push('  // OpenCode 2 配置文件（V2 schema：providers / package / capabilities）')
+  lines.push(`  // 由 ModelScout 于 ${now} 自动生成`)
+  lines.push('  //')
+  if (ctx.apiKeyMode === 'env') {
+    lines.push('  // 密钥以 {env:VAR} 形式引用，使用前请先设置环境变量：')
+    lines.push(`  //   ${ctx.envVarName}`)
+  } else if (ctx.apiKeyField) {
+    lines.push('  // ⚠️ 本文件包含明文 API Key，请勿提交到公开仓库或分享给他人。')
+  } else {
+    lines.push('  // ⚠️ 未填写 API Key，opencode 将回退到环境变量或其它鉴权来源。')
+  }
+  lines.push('  // ===================================================================')
+  return lines
+}
+
+/** 渲染 V2 完整配置（带注释 JSONC） */
+export function renderOpenCodeV2Jsonc(
+  context: GenerateContext,
+  extras?: OpenCodeV2ExtrasMap,
+): string {
+  const ctx = resolveContext(context)
+  const lines: string[] = []
+
+  lines.push('{')
+  lines.push(...v2HeaderLines(ctx))
+  lines.push('  "$schema": "https://opencode.ai/config.json",')
+  lines.push('')
+  lines.push('  "providers": {')
+  lines.push(...providerV2BodyLines(ctx, extras, 4))
+  lines.push('  }')
+  lines.push('}')
+
+  return lines.join('\n')
+}
+
+/** 渲染 V2 可粘贴片段（`"providers": { … }` 一段） */
+export function renderOpenCodeV2ProviderFragment(
+  context: GenerateContext,
+  extras?: OpenCodeV2ExtrasMap,
+): string {
+  const ctx = resolveContext(context)
+  const lines: string[] = []
+
+  lines.push('// ===================================================================')
+  lines.push('// OpenCode 2 配置片段（providers 部分，V2 schema）')
+  lines.push('// 由 ModelScout 自动生成 —— 粘贴到你已有 opencode 配置的顶层对象里')
+  lines.push('//')
+  if (ctx.apiKeyMode === 'env') {
+    lines.push(`// 密钥以 {env:VAR} 引用，使用前请先设置环境变量 ${ctx.envVarName}`)
+  } else if (ctx.apiKeyField) {
+    lines.push('// ⚠️ 本片段包含明文 API Key，请勿分享或提交到公开仓库')
+  } else {
+    lines.push('// ⚠️ 未填写 API Key，opencode 将回退到环境变量或其它鉴权来源')
+  }
+  lines.push('// ===================================================================')
+  lines.push('')
+  lines.push('"providers": {')
+  lines.push(...providerV2BodyLines(ctx, extras, 2))
+  lines.push('}')
+  lines.push('')
+  lines.push('// ↑ 如果这段不是配置文件里的最后一项，请在上一行的 } 后面补一个逗号。')
+
+  return lines.join('\n')
+}
+
+/** 渲染 V2 严格 JSON（无注释） */
+export function renderOpenCodeV2Json(
+  context: GenerateContext,
+  extras?: OpenCodeV2ExtrasMap,
+): string {
+  return JSON.stringify(buildOpenCodeV2Config(context, extras), null, 2)
+}

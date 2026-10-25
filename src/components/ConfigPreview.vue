@@ -15,7 +15,7 @@
  * 三级都失败时提示用户手动全选复制，并自动选中代码区。
  */
 
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   NButton,
   NCheckbox,
@@ -26,18 +26,23 @@ import {
   NAlert,
   NInput,
   NTooltip,
+  NRadioGroup,
+  NRadioButton,
   useDialog,
   useMessage,
 } from 'naive-ui'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 
 import { useProbe } from '@/composables/useProbe'
-import { saveConfigFile } from '@/api/commands'
+import { inspectToolConfig, saveConfigFile } from '@/api/commands'
 import QuickFillDialog from '@/components/QuickFillDialog.vue'
 import {
   renderOpenCodeJsonc,
   renderOpenCodeJson,
   renderOpenCodeProviderFragment,
+  renderOpenCodeV2Jsonc,
+  renderOpenCodeV2Json,
+  renderOpenCodeV2ProviderFragment,
   inferProviderPackage,
 } from '@/generators/opencode'
 import {
@@ -47,6 +52,7 @@ import {
   FORMAT_ASSUMPTIONS,
 } from '@/generators/deepseekHardness'
 import { renderDshProviderFragmentYml } from '@/generators/dsh'
+import { detectOpenCodeVersion } from '@/generators/configScan'
 import {
   type ApiKeyMode,
   hasApiKey,
@@ -61,6 +67,7 @@ import ModelEditTable from '@/components/ModelEditTable.vue'
 import {
   applyRowsToProbeModels,
   rowsFromProbeModels,
+  v2ExtrasFromRows,
   type ModelEditRow,
 } from '@/generators/modelOverrides'
 
@@ -98,6 +105,28 @@ const activeTab = ref<'opencode' | 'hardness'>('opencode')
  */
 const opencodeFormat = ref<'jsonc' | 'json' | 'fragment'>('fragment')
 const hardnessFormat = ref<'dshYaml' | 'jsonc' | 'json' | 'toml'>('dshYaml')
+
+/* ---- OpenCode v1 / v2 版本选择（默认跟随本机配置文件的识别结果） ---- */
+
+/** 当前选中的 schema 世代 */
+const opencodeVersion = ref<'v1' | 'v2'>('v1')
+/** 从本机配置文件识别出的世代（null = 没识别到 / 尚未识别） */
+const detectedOpenCodeVersion = ref<'v1' | 'v2' | null>(null)
+
+// 挂载时读默认路径的 OpenCode 配置并识别世代；识别到就把选择框默认过去
+onMounted(async () => {
+  try {
+    const file = await inspectToolConfig('opencode')
+    if (!file.exists) return
+    const detected = detectOpenCodeVersion(file.content)
+    if (detected) {
+      detectedOpenCodeVersion.value = detected
+      opencodeVersion.value = detected
+    }
+  } catch {
+    // 读不到本机配置（权限/环境问题）就保持 v1 默认,不阻塞预览
+  }
+})
 
 /** 一键填写对话框 */
 const quickFillShow = ref(false)
@@ -199,6 +228,12 @@ const overrideRows = ref<ModelEditRow[]>([])
 /** 展开参数调整 */
 function openOverrides(): void {
   overrideRows.value = rowsFromProbeModels(context.value.models)
+  // v2 下给推理模型预填常规强度档位（可在表里增删；清空 = 不写该字段）
+  if (opencodeVersion.value === 'v2') {
+    for (const row of overrideRows.value) {
+      if (row.reasoning === true) row.effort = ['low', 'medium', 'high']
+    }
+  }
   overridesOpen.value = true
 }
 
@@ -354,10 +389,22 @@ const context = computed(() => ({
 
 // ---- 生成结果 ----
 
-/** OpenCode 生成文本（未含手动编辑） */
+/** OpenCode 生成文本（未含手动编辑）；v1/v2 各走一套渲染器 */
 const opencodeBaseText = computed(() => {
   if (effectiveContext.value.models.length === 0) {
     return '// 尚未选择任何模型。请在上方结果表格中勾选要导出的模型。'
+  }
+  // v2 独有参数只在参数调整区展开时参与生成
+  const extras = overridesOpen.value ? v2ExtrasFromRows(overrideRows.value) : undefined
+  if (opencodeVersion.value === 'v2') {
+    switch (opencodeFormat.value) {
+      case 'json':
+        return renderOpenCodeV2Json(effectiveContext.value, extras)
+      case 'fragment':
+        return renderOpenCodeV2ProviderFragment(effectiveContext.value, extras)
+      default:
+        return renderOpenCodeV2Jsonc(effectiveContext.value, extras)
+    }
   }
   switch (opencodeFormat.value) {
     case 'json':
@@ -661,11 +708,28 @@ watch(
       </div>
 
       <div class="flex items-center gap-2">
+        <!-- OpenCode v1/v2 版本切换（默认跟随本机配置识别结果） -->
+        <NTooltip v-if="activeTab === 'opencode'" trigger="hover" style="max-width: 300px">
+          <template #trigger>
+            <div class="flex items-center gap-1.5">
+              <NRadioGroup v-model:value="opencodeVersion" size="small">
+                <NRadioButton value="v1">V1</NRadioButton>
+                <NRadioButton value="v2">V2</NRadioButton>
+              </NRadioGroup>
+              <NTag v-if="detectedOpenCodeVersion" size="tiny" :bordered="false" type="success">
+                已识别 {{ detectedOpenCodeVersion === 'v2' ? 'V2' : 'V1' }}
+              </NTag>
+            </div>
+          </template>
+          OpenCode 配置格式版本。V1 是 provider/npm/options 键名，V2（opencode 2，2026-10 起）
+          是 providers/package/settings + capabilities（含推理强度 effort、思考预算）。
+          默认跟随本机配置文件自动识别；一键填写并入已有文件时以文件本身为准。
+        </NTooltip>
+
         <!-- 形态切换 -->
         <!-- consistent-menu-width=false：让菜单按内容自适应宽度，避免长文案被截断 -->
         <NSelect
           v-if="activeTab === 'opencode'"
-          v-model:value="opencodeFormat"
           :options="[
             { label: '片段（粘贴进已有配置）', value: 'fragment' },
             { label: 'JSONC（完整配置）', value: 'jsonc' },
@@ -845,6 +909,7 @@ watch(
             :rows="overrideRows"
             :show-tools="activeTab === 'opencode'"
             :show-reasoning="true"
+            :v2="activeTab === 'opencode' && opencodeVersion === 'v2'"
           />
         </div>
       </template>
@@ -989,6 +1054,7 @@ watch(
       v-model:show="quickFillShow"
       :tool="quickFillTool"
       :context="effectiveContext"
+      :preferred-version="quickFillTool === 'opencode' ? opencodeVersion : undefined"
       @written="onQuickFillWritten"
     />
   </section>

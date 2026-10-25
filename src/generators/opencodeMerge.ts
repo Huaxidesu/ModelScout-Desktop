@@ -29,7 +29,13 @@ import {
   parseJsonc,
   type MemberSpan,
 } from '@/utils/jsonc'
-import { buildOpenCodeConfig, renderOpenCodeJsonc, type GenerateContext } from './opencode'
+import {
+  buildOpenCodeConfig,
+  renderOpenCodeJsonc,
+  renderOpenCodeV2Jsonc,
+  type GenerateContext,
+  type OpenCodeV2ExtrasMap,
+} from './opencode'
 
 /** 合并选项 */
 export interface OpenCodeMergeOptions {
@@ -39,6 +45,16 @@ export interface OpenCodeMergeOptions {
    * 原位更新而不是追加（重复填写不堆积）。
    */
   providerComment?: string
+  /**
+   * v2 独有参数（强度档位 / 思考预算 / 温度 / 输入上限），按模型 ID 叠加。
+   * 仅在文件为 v2（或新建 V2）时生效。
+   */
+  v2Extras?: OpenCodeV2ExtrasMap
+  /**
+   * 新建文件（目标不存在/为空）时用的 schema 世代；缺省 v1。
+   * 已有文件永远跟随文件本身的世代（本选项不生效）。
+   */
+  createVersion?: 'v1' | 'v2'
 }
 
 /** 合并结果 */
@@ -72,7 +88,10 @@ export function mergeOpenCodeIntoText(
 ): OpenCodeMergeResult {
   // ---- 形态 1：没有有效配置 → 写完整文件 ----
   if (existingText.trim() === '' || isEmptyJsoncObject(existingText)) {
-    const body = renderOpenCodeJsonc(context)
+    const body =
+      options.createVersion === 'v2'
+        ? renderOpenCodeV2Jsonc(context, options.v2Extras)
+        : renderOpenCodeJsonc(context)
     const text = options.providerComment
       ? `// ${options.providerComment}
 ${body}`
@@ -103,7 +122,7 @@ ${body}`
     return spliceIntoExisting(existingText, context, options)
   } catch {
     // ---- 形态 3：对象级合并重写 ----（JSON.stringify 不含注释，注释选项被丢弃）
-    return rewriteWholeFile(parsed as Record<string, unknown>, context)
+    return rewriteWholeFile(parsed as Record<string, unknown>, context, options)
   }
 }
 
@@ -162,10 +181,16 @@ function withMarkerComment(text: string, keyStart: number, comment: string): str
  * v1 provider 对象 → v2 形态（opencode 2 的键名，2026-10 迁移文档）。
  *
  * 对照：`npm`→`package`（加 `aisdk:` 前缀）、`options`→`settings`、
- * 模型 `id`→`modelID`、`tool_call`/`attachment`→`capabilities.{tools,input}`；
- * v1 的 `reasoning` 在 v2 被忽略（迁移文档列为「带警告忽略」），不迁移。
+ * 模型 `id`→`modelID`、`tool_call`/`attachment`→`capabilities.{tools,input}`。
+ * v1 的布尔 `reasoning` 映射为 v2 的 `capabilities.reasoning.supported`
+ * （opencode 自身的迁移器会忽略 v1 的 reasoning；这里是我们自己生成的
+ * 数据，直接写成 v2 原生对象）。v2Extras 在此之上按模型叠加
+ * 强度档位 / 预算 / 温度 / 输入上限。
  */
-export function toOpenCodeV2Provider(v1: Record<string, unknown>): Record<string, unknown> {
+export function toOpenCodeV2Provider(
+  v1: Record<string, unknown>,
+  extras?: OpenCodeV2ExtrasMap,
+): Record<string, unknown> {
   const options = (v1.options ?? {}) as Record<string, unknown>
   const models: Record<string, unknown> = {}
   const rawModels = (v1.models ?? {}) as Record<string, Record<string, unknown>>
@@ -181,9 +206,34 @@ export function toOpenCodeV2Provider(v1: Record<string, unknown>): Record<string
     if (raw.attachment === true) input.push('image')
     capabilities.input = input
     capabilities.output = ['text']
+
+    const extra = extras?.[key]
+    if (extra?.temperature !== undefined) capabilities.temperature = extra.temperature
+
+    const reasoning: Record<string, unknown> = {}
+    if (raw.reasoning === true) reasoning.supported = true
+    if (extra?.effort?.length) {
+      reasoning.supported = true
+      reasoning.effort = [...extra.effort]
+      reasoning.toggle = true
+    }
+    const budget: Record<string, unknown> = {}
+    if (extra?.budgetMin !== undefined) budget.min = extra.budgetMin
+    if (extra?.budgetMax !== undefined) budget.max = extra.budgetMax
+    if (Object.keys(budget).length > 0) {
+      reasoning.supported = true
+      reasoning.budget = budget
+    }
+    if (Object.keys(reasoning).length > 0) capabilities.reasoning = reasoning
     entry.capabilities = capabilities
 
-    if (raw.limit && typeof raw.limit === 'object') entry.limit = raw.limit
+    if (raw.limit && typeof raw.limit === 'object') {
+      const limit = { ...(raw.limit as Record<string, unknown>) }
+      if (extra?.inputLimit !== undefined) limit.input = extra.inputLimit
+      entry.limit = limit
+    } else if (extra?.inputLimit !== undefined) {
+      entry.limit = { input: extra.inputLimit }
+    }
     models[key] = entry
   }
 
@@ -220,7 +270,7 @@ function spliceIntoExisting(
   const memberKey = rootMembers.has('providers') ? 'providers' : 'provider'
   const providerValue =
     memberKey === 'providers'
-      ? toOpenCodeV2Provider(generatedValue as unknown as Record<string, unknown>)
+      ? toOpenCodeV2Provider(generatedValue as unknown as Record<string, unknown>, options.v2Extras)
       : generatedValue
 
   // ---- 情况 A：顶层已有 provider 容器 ----
@@ -359,8 +409,30 @@ function escapeJsonKey(key: string): string {
 function rewriteWholeFile(
   parsed: Record<string, unknown>,
   context: GenerateContext,
+  options: OpenCodeMergeOptions = {},
 ): OpenCodeMergeResult {
   const generated = buildOpenCodeConfig(context)
+  const providerKey = Object.keys(generated.provider)[0]
+  const generatedValue = generated.provider[providerKey] as unknown as Record<string, unknown>
+
+  // 跟随文件世代：v2 文件写回 providers（v2 形态），否则写 v1 的 provider
+  if (typeof parsed.providers === 'object' && parsed.providers !== null && !Array.isArray(parsed.providers)) {
+    const providers = parsed.providers as Record<string, unknown>
+    const merged: Record<string, unknown> = {
+      ...parsed,
+      providers: {
+        ...providers,
+        [providerKey]: toOpenCodeV2Provider(generatedValue, options.v2Extras),
+      },
+    }
+    return {
+      mode: 'rewrite',
+      text: ensureTrailingNewline(JSON.stringify(merged, null, 2)),
+      warnings: [
+        '现有文件的结构超出拼接式合并的能力范围，已改为整体重写：文件里的注释会丢失，其他配置项保留。',
+      ],
+    }
+  }
 
   const providers =
     typeof parsed.provider === 'object' && parsed.provider !== null && !Array.isArray(parsed.provider)

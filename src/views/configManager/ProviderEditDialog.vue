@@ -131,7 +131,8 @@ async function save(): Promise<void> {
         <ModelEditTable
           :rows="rows"
           :show-tools="tool === 'opencode'"
-          :show-reasoning="tool !== 'opencode' || schema === 'v1'"
+          :show-reasoning="true"
+          :v2="tool === 'opencode' && schema === 'v2'"
         />
       </div>
     </div>

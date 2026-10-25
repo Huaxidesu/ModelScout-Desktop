@@ -293,3 +293,25 @@ export function parseDshProviders(content: string): ScanParseResult<DshScanEntry
 
   return { entries, errors }
 }
+
+/**
+ * 识别一份 OpenCode 配置文本的 schema 世代。
+ *
+ * 规则与 opencodeMerge 的容器选择一致：顶层有 `providers`（复数）按 v2
+ * 处理（v2 对 v1 键只做内存归一化，同文件冲突时 v2 原生值胜出）；只有
+ * `provider`（单数）才是 v1；两者都没有（空对象/别的配置）或解析失败
+ * 返回 null —— 由调用方决定回退（通常是生成器选择的版本）。
+ */
+export function detectOpenCodeVersion(text: string): OpenCodeSchema | null {
+  let parsed: unknown
+  try {
+    parsed = parseJsonc(text)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  const root = parsed as Record<string, unknown>
+  if (typeof root.providers === 'object' && root.providers !== null) return 'v2'
+  if (typeof root.provider === 'object' && root.provider !== null) return 'v1'
+  return null
+}

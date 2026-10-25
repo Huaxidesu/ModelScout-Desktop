@@ -12,6 +12,7 @@
  */
 
 import type { ModelInfo } from '@/types/contracts'
+import type { OpenCodeV2ExtrasMap } from './opencode'
 
 /** 一个模型的可编辑参数投影 */
 export interface ModelEditRow {
@@ -29,6 +30,17 @@ export interface ModelEditRow {
   contextWindow: number | null
   /** 单次输出上限；null = 配置未设置 */
   maxOutput: number | null
+  /* ---- 以下为 OpenCode v2 独有字段（v1/dsh 场景恒为 null） ---- */
+  /** v2 推理强度档位（capabilities.reasoning.effort）；null = 未设置 */
+  effort: string[] | null
+  /** v2 思考预算下限（capabilities.reasoning.budget.min）；null = 未设置 */
+  budgetMin: number | null
+  /** v2 思考预算上限（capabilities.reasoning.budget.max）；null = 未设置 */
+  budgetMax: number | null
+  /** v2 是否支持温度参数（capabilities.temperature）；null = 未设置 */
+  temperature: boolean | null
+  /** v2 输入侧上限（limit.input）；null = 未设置 */
+  inputLimit: number | null
 }
 
 /** 未探测到上限时的占位（仅用于探测数据的可编辑初值，不写回配置） */
@@ -50,13 +62,28 @@ function v2InputHasImage(input: unknown): boolean | null {
   return input.includes('image')
 }
 
+/** v2 capabilities.reasoning.effort → string[] | null */
+function v2Effort(reasoning: unknown): string[] | null {
+  if (typeof reasoning !== 'object' || reasoning === null) return null
+  const effort = (reasoning as Record<string, unknown>).effort
+  return Array.isArray(effort) && effort.every((v) => typeof v === 'string') ? (effort as string[]) : null
+}
+
+/** v2 capabilities.reasoning.budget 的单个数值字段 */
+function v2BudgetValue(reasoning: unknown, key: 'min' | 'max'): number | null {
+  if (typeof reasoning !== 'object' || reasoning === null) return null
+  const budget = (reasoning as Record<string, unknown>).budget
+  if (typeof budget !== 'object' || budget === null) return null
+  return num((budget as Record<string, unknown>)[key])
+}
+
 // ---- 从配置对象提取 ----
 
 /**
  * 从 OpenCode provider 原始对象提取模型编辑行。
  *
- * @param schema 文件世代：v1（tool_call/attachment/reasoning）或
- *               v2（capabilities.{tools,input}；v2 忽略 reasoning）
+ * @param schema 文件世代：v1（tool_call/attachment/reasoning 布尔）或
+ *               v2（capabilities.{tools,input,reasoning}；reasoning 是对象）
  */
 export function extractOpenCodeRows(
   provider: Record<string, unknown>,
@@ -67,14 +94,23 @@ export function extractOpenCodeRows(
     const limit = (entry.limit ?? {}) as Record<string, unknown>
     if (schema === 'v2') {
       const caps = (entry.capabilities ?? {}) as Record<string, unknown>
+      const reasoning = caps.reasoning
       return {
         id: key,
         name: typeof entry.name === 'string' ? entry.name : '',
-        reasoning: null, // v2 忽略该能力（迁移文档：带警告忽略）
+        reasoning:
+          typeof reasoning === 'object' && reasoning !== null
+            ? bool((reasoning as Record<string, unknown>).supported)
+            : null,
         vision: v2InputHasImage(caps.input),
         tools: bool(caps.tools),
         contextWindow: num(limit.context),
         maxOutput: num(limit.output),
+        effort: v2Effort(reasoning),
+        budgetMin: v2BudgetValue(reasoning, 'min'),
+        budgetMax: v2BudgetValue(reasoning, 'max'),
+        temperature: bool(caps.temperature),
+        inputLimit: num(limit.input),
       }
     }
     return {
@@ -85,6 +121,11 @@ export function extractOpenCodeRows(
       tools: bool(entry.tool_call),
       contextWindow: num(limit.context),
       maxOutput: num(limit.output),
+      effort: null,
+      budgetMin: null,
+      budgetMax: null,
+      temperature: null,
+      inputLimit: null,
     }
   })
 }
@@ -101,6 +142,11 @@ export function extractDshRows(provider: Record<string, unknown>): ModelEditRow[
     tools: null, // dsh 的模型条目没有工具开关字段
     contextWindow: num(entry.contextWindow),
     maxOutput: num(entry.maxTokens),
+    effort: null,
+    budgetMin: null,
+    budgetMax: null,
+    temperature: null,
+    inputLimit: null,
   }))
 }
 
@@ -114,6 +160,11 @@ export function rowsFromProbeModels(models: ModelInfo[]): ModelEditRow[] {
     tools: m.supportsTools === 'supported',
     contextWindow: m.contextLimit > 0 ? m.contextLimit : MODEL_EDIT_FALLBACK_CONTEXT,
     maxOutput: m.maxOutputLimit > 0 ? m.maxOutputLimit : MODEL_EDIT_FALLBACK_OUTPUT,
+    effort: null,
+    budgetMin: null,
+    budgetMax: null,
+    temperature: null,
+    inputLimit: null,
   }))
 }
 
@@ -144,36 +195,107 @@ export function applyOpenCodeRows(
     const entry = (models[row.id] ?? {}) as Record<string, unknown>
 
     if (schema === 'v2') {
+      const caps = { ...((entry.capabilities ?? {}) as Record<string, unknown>) }
       if (row.tools !== before.tools && row.tools !== null) {
-        entry.capabilities = { ...((entry.capabilities ?? {}) as Record<string, unknown>), tools: row.tools }
+        caps.tools = row.tools
       }
       if (row.vision !== before.vision && row.vision !== null) {
-        entry.capabilities = {
-          ...((entry.capabilities ?? {}) as Record<string, unknown>),
-          input: row.vision ? ['text', 'image'] : ['text'],
+        caps.input = row.vision ? ['text', 'image'] : ['text']
+      }
+      if (row.temperature !== before.temperature && row.temperature !== null) {
+        caps.temperature = row.temperature
+      }
+
+      // reasoning：v2 是对象（supported 必填）；能力开关/强度/预算
+      // 任一动过都写，未动过的子字段原样保留
+      const reasoningTouched =
+        row.reasoning !== before.reasoning ||
+        !arraysEqual(row.effort, before.effort) ||
+        row.budgetMin !== before.budgetMin ||
+        row.budgetMax !== before.budgetMax
+      if (reasoningTouched) {
+        const reasoning = {
+          ...((caps.reasoning ?? {}) as Record<string, unknown>),
+        }
+        if (row.reasoning !== before.reasoning && row.reasoning !== null) {
+          reasoning.supported = row.reasoning
+        }
+        if (!arraysEqual(row.effort, before.effort)) {
+          if (row.effort && row.effort.length > 0) {
+            reasoning.effort = [...row.effort]
+            reasoning.toggle = true
+          } else {
+            delete reasoning.effort
+            delete reasoning.toggle
+          }
+        }
+        if (row.budgetMin !== before.budgetMin || row.budgetMax !== before.budgetMax) {
+          const budget = { ...((reasoning.budget ?? {}) as Record<string, unknown>) }
+          if (row.budgetMin !== before.budgetMin) {
+            if (row.budgetMin === null) delete budget.min
+            else budget.min = row.budgetMin
+          }
+          if (row.budgetMax !== before.budgetMax) {
+            if (row.budgetMax === null) delete budget.max
+            else budget.max = row.budgetMax
+          }
+          if (Object.keys(budget).length > 0) reasoning.budget = budget
+          else delete reasoning.budget
+        }
+        // supported 缺省时补 true（schema 必填；能走到这里说明用户在配置推理）
+        if (reasoning.supported === undefined) reasoning.supported = true
+        if (reasoning.supported === false && Object.keys(reasoning).length > 1) {
+          // supported=false 时其余子字段无意义，一并去掉
+          caps.reasoning = { supported: false }
+        } else {
+          caps.reasoning = reasoning
         }
       }
-      // v2 的 output 保持 ['text']；reasoning 不写（v2 忽略）
+      entry.capabilities = caps
+
+      // limit：v2 三字段均可选，只写动过的
+      const limitTouched =
+        row.contextWindow !== before.contextWindow ||
+        row.maxOutput !== before.maxOutput ||
+        row.inputLimit !== before.inputLimit
+      if (limitTouched) {
+        const limit = { ...((entry.limit ?? {}) as Record<string, unknown>) }
+        if (row.contextWindow !== before.contextWindow && row.contextWindow !== null) {
+          limit.context = row.contextWindow
+        }
+        if (row.maxOutput !== before.maxOutput && row.maxOutput !== null) {
+          limit.output = row.maxOutput
+        }
+        if (row.inputLimit !== before.inputLimit) {
+          if (row.inputLimit === null) delete limit.input
+          else limit.input = row.inputLimit
+        }
+        // context/output 沿用 v1 的成对习惯：只改一侧时另一侧补齐
+        if (row.contextWindow !== before.contextWindow || row.maxOutput !== before.maxOutput) {
+          if (limit.context === undefined) limit.context = before.contextWindow ?? MODEL_EDIT_FALLBACK_CONTEXT
+          if (limit.output === undefined) limit.output = before.maxOutput ?? MODEL_EDIT_FALLBACK_OUTPUT
+        }
+        entry.limit = limit
+      }
     } else {
       if (row.tools !== before.tools && row.tools !== null) entry.tool_call = row.tools
       if (row.vision !== before.vision && row.vision !== null) entry.attachment = row.vision
       if (row.reasoning !== before.reasoning && row.reasoning !== null) entry.reasoning = row.reasoning
-    }
-
-    const limitTouched =
-      row.contextWindow !== before.contextWindow || row.maxOutput !== before.maxOutput
-    if (limitTouched) {
-      const limit = { ...((entry.limit ?? {}) as Record<string, unknown>) }
-      if (row.contextWindow !== before.contextWindow && row.contextWindow !== null) {
-        limit.context = row.contextWindow
+      const limitTouched =
+        row.contextWindow !== before.contextWindow || row.maxOutput !== before.maxOutput
+      if (limitTouched) {
+        const limit = { ...((entry.limit ?? {}) as Record<string, unknown>) }
+        if (row.contextWindow !== before.contextWindow && row.contextWindow !== null) {
+          limit.context = row.contextWindow
+        }
+        if (row.maxOutput !== before.maxOutput && row.maxOutput !== null) {
+          limit.output = row.maxOutput
+        }
+        // schema 要求成对：只改了一侧时，另一侧沿用原值，原值缺失用回退
+        if (limit.context === undefined) limit.context = before.contextWindow ?? MODEL_EDIT_FALLBACK_CONTEXT
+        if (limit.output === undefined) limit.output = before.maxOutput ?? MODEL_EDIT_FALLBACK_OUTPUT
+        entry.limit = limit
       }
-      if (row.maxOutput !== before.maxOutput && row.maxOutput !== null) {
-        limit.output = row.maxOutput
-      }
-      // schema 要求成对：只改了一侧时，另一侧沿用原值，原值缺失用回退
-      if (limit.context === undefined) limit.context = before.contextWindow ?? MODEL_EDIT_FALLBACK_CONTEXT
-      if (limit.output === undefined) limit.output = before.maxOutput ?? MODEL_EDIT_FALLBACK_OUTPUT
-      entry.limit = limit
     }
 
     models[row.id] = entry
@@ -181,6 +303,33 @@ export function applyOpenCodeRows(
 
   next.models = models
   return next
+}
+
+/** 两个 string[] | null 是否相等（浅比较元素） */
+function arraysEqual(a: string[] | null, b: string[] | null): boolean {
+  if (a === b) return true
+  if (a === null || b === null) return false
+  return a.length === b.length && a.every((v, i) => v === b[i])
+}
+
+/**
+ * 把编辑行投影成 v2 附加参数表（opencode.ts 的 OpenCodeV2ExtrasMap）。
+ *
+ * 只收 v2 独有字段；null/空一律不写。供生成器与一键填写在
+ * 「从探测结果新建模型条目」的路径上叠加这些参数。
+ */
+export function v2ExtrasFromRows(rows: ModelEditRow[]): OpenCodeV2ExtrasMap {
+  const out: OpenCodeV2ExtrasMap = {}
+  for (const row of rows) {
+    const extras: Record<string, unknown> = {}
+    if (row.effort && row.effort.length > 0) extras.effort = [...row.effort]
+    if (row.budgetMin !== null) extras.budgetMin = row.budgetMin
+    if (row.budgetMax !== null) extras.budgetMax = row.budgetMax
+    if (row.temperature !== null) extras.temperature = row.temperature
+    if (row.inputLimit !== null) extras.inputLimit = row.inputLimit
+    if (Object.keys(extras).length > 0) out[row.id] = extras
+  }
+  return out
 }
 
 /**

@@ -30,6 +30,7 @@ import {
 import { inspectToolConfig, writeToolConfig } from '@/api/commands'
 import { mergeOpenCodeIntoText } from '@/generators/opencodeMerge'
 import { mergeDshIntoText } from '@/generators/dsh'
+import { detectOpenCodeVersion } from '@/generators/configScan'
 import type { GenerateContext } from '@/generators/opencode'
 import { diffLines, type DiffRow } from '@/utils/diffLines'
 import { highlightLine } from '@/utils/highlight'
@@ -37,6 +38,7 @@ import ModelEditTable from '@/components/ModelEditTable.vue'
 import {
   applyRowsToProbeModels,
   rowsFromProbeModels,
+  v2ExtrasFromRows,
   type ModelEditRow,
 } from '@/generators/modelOverrides'
 import type { ToolConfigFile } from '@/types/contracts'
@@ -48,6 +50,11 @@ const props = defineProps<{
   tool: 'opencode' | 'dsh'
   /** 生成上下文（与配置预览区共用同一份推断与用户输入） */
   context: GenerateContext
+  /**
+   * 新建文件时使用的 OpenCode schema 世代（来自配置预览区的 V1/V2 选择）。
+   * 已有文件永远跟随文件本身的世代，此选项不生效。
+   */
+  preferredVersion?: 'v1' | 'v2'
 }>()
 
 const emit = defineEmits<{
@@ -76,6 +83,19 @@ const mergeModeLabel = ref('')
 const mergeWarnings = ref<string[]>([])
 /** 读取/合并失败的用户可读错误（非空 = 阻止写入） */
 const fatal = ref('')
+
+/** 目标文件识别出的 OpenCode schema 世代（null = 文件不存在或没识别到） */
+const targetSchema = ref<'v1' | 'v2' | null>(null)
+
+/**
+ * 本次合并实际生效的世代：已有文件跟随文件；新建文件跟随配置预览区的
+ * V1/V2 选择（preferredVersion，缺省 v1）。v2 时参数调整区会带 v2 独有列。
+ */
+const effectiveSchema = computed<'v1' | 'v2'>(() => {
+  if (props.tool !== 'opencode') return 'v1'
+  if (file.value?.exists && targetSchema.value) return targetSchema.value
+  return props.preferredVersion ?? 'v1'
+})
 
 // ---- 派生 ----
 
@@ -112,6 +132,12 @@ const overrideRows = ref<ModelEditRow[]>([])
 /** 打开参数调整区时按当前 context 建行 */
 function openOverrides(): void {
   overrideRows.value = rowsFromProbeModels(props.context.models)
+  // v2 目标：给推理模型预填常规强度档位（可增删；清空 = 不写该字段）
+  if (props.tool === 'opencode' && effectiveSchema.value === 'v2') {
+    for (const row of overrideRows.value) {
+      if (row.reasoning === true) row.effort = ['low', 'medium', 'high']
+    }
+  }
   overridesOpen.value = true
 }
 
@@ -195,6 +221,7 @@ async function reload(): Promise<void> {
     const result = await inspectToolConfig(props.tool, custom)
     file.value = result
     targetPath.value = result.path
+    targetSchema.value = result.exists ? detectOpenCodeVersion(result.content) : null
     computeMerge()
   } catch (err) {
     file.value = null
@@ -216,13 +243,17 @@ function computeMerge(): void {
     if (props.tool === 'opencode') {
       const result = mergeOpenCodeIntoText(existing, effectiveContext.value, {
         providerComment: comment,
+        // v2 独有参数（强度档位/预算/温度/输入上限）只在参数区展开时参与
+        v2Extras: overridesOpen.value ? v2ExtrasFromRows(overrideRows.value) : undefined,
+        // 已有文件跟随文件世代（merge 内部自行判断）；新建文件用所选版本
+        createVersion: file.value?.exists ? undefined : (props.preferredVersion ?? 'v1'),
       })
       mergedText.value = result.text
       mergeModeLabel.value =
         result.mode === 'create'
-          ? '目标文件没有模型配置，将直接写入完整配置'
+          ? `目标文件没有模型配置，将直接写入完整配置（${effectiveSchema.value === 'v2' ? 'V2 格式' : 'V1 格式'}）`
           : result.mode === 'splice'
-            ? '已把 provider 片段并入现有配置（原有内容与注释保留）'
+            ? `已把 provider 片段并入现有配置（原有内容与注释保留${targetSchema.value === 'v2' ? '，跟随文件的 V2 格式' : ''}）`
             : '现有文件结构特殊，改为整体重写（其他配置项保留）'
       mergeWarnings.value = result.warnings
     } else {
@@ -391,6 +422,15 @@ function close(): void {
           <div class="mb-1 flex items-center justify-between">
             <span class="text-[11px] text-ms-text-dim">
               模型参数调整 —— 右侧预览与最终写入都使用这里的值
+              <NTag
+                v-if="tool === 'opencode' && effectiveSchema === 'v2'"
+                size="tiny"
+                :bordered="false"
+                type="info"
+                class="ml-1"
+              >
+                V2：强度档位 / 思考预算 / 温度 / 输入上限可调
+              </NTag>
             </span>
             <NButton
               size="tiny"
@@ -405,6 +445,7 @@ function close(): void {
               :rows="overrideRows"
               :show-tools="tool === 'opencode'"
               :show-reasoning="true"
+              :v2="tool === 'opencode' && effectiveSchema === 'v2'"
             />
           </div>
         </template>

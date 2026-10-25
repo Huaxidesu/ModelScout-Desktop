@@ -18,7 +18,9 @@ import {
   extractDshRows,
   extractOpenCodeRows,
   rowsFromProbeModels,
+  v2ExtrasFromRows,
 } from './modelOverrides'
+import { mergeOpenCodeIntoText, toOpenCodeV2Provider } from './opencodeMerge'
 
 function makeModel(id: string, overrides: Partial<ModelInfo> = {}): ModelInfo {
   return {
@@ -163,5 +165,131 @@ describe('探测数据投影(一键填写)', () => {
     expect(applied[1].contextLimit).toBe(131072)
     // 原数组不被修改
     expect(models[1].supportsTools).toBe('unknown')
+  })
+})
+
+describe('OpenCode v2 扩展字段（effort / budget / temperature / inputLimit）', () => {
+  it('extractOpenCodeRows(v2) 读出 reasoning.supported 与 effort/budget', () => {
+    const provider = {
+      models: {
+        'r1': {
+          modelID: 'r1',
+          capabilities: {
+            tools: true,
+            input: ['text', 'image'],
+            temperature: false,
+            reasoning: { supported: true, effort: ['low', 'high'], budget: { min: 1024, max: 8192 } },
+          },
+          limit: { context: 65536, output: 8192, input: 32768 },
+        },
+      },
+    }
+    const [row] = extractOpenCodeRows(provider, 'v2')
+    expect(row.reasoning).toBe(true)
+    expect(row.effort).toEqual(['low', 'high'])
+    expect(row.budgetMin).toBe(1024)
+    expect(row.budgetMax).toBe(8192)
+    expect(row.temperature).toBe(false)
+    expect(row.inputLimit).toBe(32768)
+  })
+
+  it('applyOpenCodeRows(v2) 只写动过的字段:effort 变更写 capabilities.reasoning.effort', () => {
+    const provider = {
+      models: {
+        'r1': { modelID: 'r1', capabilities: { tools: true, reasoning: { supported: true } } },
+      },
+    }
+    const originals = extractOpenCodeRows(provider, 'v2')
+    const rows = extractOpenCodeRows(provider, 'v2')
+    rows[0].effort = ['medium', 'high']
+    const next = applyOpenCodeRows(provider, rows, originals, 'v2')
+    const entry = (next.models as Record<string, Record<string, unknown>>).r1
+    const caps = entry.capabilities as Record<string, unknown>
+    expect(caps.tools).toBe(true) // 未动过,保留
+    expect(caps.reasoning).toEqual({ supported: true, effort: ['medium', 'high'], toggle: true })
+  })
+
+  it('applyOpenCodeRows(v2) 关闭 supported 时清掉子字段', () => {
+    const provider = {
+      models: {
+        'r1': { capabilities: { reasoning: { supported: true, effort: ['high'] } } },
+      },
+    }
+    const originals = extractOpenCodeRows(provider, 'v2')
+    const rows = extractOpenCodeRows(provider, 'v2')
+    rows[0].reasoning = false
+    const next = applyOpenCodeRows(provider, rows, originals, 'v2')
+    const entry = (next.models as Record<string, Record<string, unknown>>).r1
+    expect(entry.capabilities).toEqual({ reasoning: { supported: false } })
+  })
+
+  it('v2ExtrasFromRows 只收非空 v2 字段', () => {
+    const rows = extractOpenCodeRows({ models: { a: {} } }, 'v2')
+    rows[0].effort = ['high']
+    rows[0].budgetMax = 4096
+    const extras = v2ExtrasFromRows(rows)
+    expect(extras.a).toEqual({ effort: ['high'], budgetMax: 4096 })
+    // 没有任何 v2 字段的行不进表
+    const empty = extractOpenCodeRows({ models: { a: {}, b: {} } }, 'v2')
+    empty[0].effort = ['low']
+    expect(Object.keys(v2ExtrasFromRows(empty))).toEqual(['a'])
+  })
+})
+
+describe('mergeOpenCodeIntoText —— v2 选项', () => {
+  it('createVersion=v2 的新建文件是 providers/capabilities 形态,extras 写入 effort', () => {
+    const result = mergeOpenCodeIntoText('', {
+      baseUrl: 'https://api.example.com/v1',
+      models: [
+        {
+          id: 'r1', displayName: 'r1', supportsTools: 'supported', supportsVision: 'unsupported',
+          isReasoning: true, contextLimit: 32768, maxOutputLimit: 8192,
+        } as never,
+      ],
+      providerKey: 'gw',
+    }, { createVersion: 'v2', v2Extras: { r1: { effort: ['low', 'high'] } } })
+    expect(result.mode).toBe('create')
+    expect(result.text).toContain('"providers"')
+    expect(result.text).toContain('"modelID"')
+    expect(result.text).toContain('"effort"')
+    expect(result.text).toContain('"package": "aisdk:')
+  })
+
+  it('并入已有 v2 文件时 extras 生效且注释保留', () => {
+    const existing = `{
+  // 我的注释
+  "providers": {
+    "old": { "package": "aisdk:@ai-sdk/openai-compatible", "settings": { "baseURL": "https://old.example.com/v1" }, "models": {} }
+  }
+}`
+    const result = mergeOpenCodeIntoText(existing, {
+      baseUrl: 'https://api.example.com/v1',
+      models: [
+        {
+          id: 'r1', displayName: 'r1', supportsTools: 'supported', supportsVision: 'unsupported',
+          isReasoning: true, contextLimit: 32768, maxOutputLimit: 8192,
+        } as never,
+      ],
+      providerKey: 'gw',
+    }, { v2Extras: { r1: { effort: ['high'], temperature: true } } })
+    expect(result.mode).toBe('splice')
+    expect(result.text).toContain('// 我的注释')
+    expect(result.text).toContain('"old"')
+    expect(result.text).toContain('"effort"')
+    expect(result.text).toContain('"temperature": true')
+    // 旧 provider 保持 v2 键名不被破坏
+    expect(result.text).toContain('"package": "aisdk:@ai-sdk/openai-compatible"')
+  })
+
+  it('toOpenCodeV2Provider 把 v1 的 reasoning:true 映射为 supported:true', () => {
+    const converted = toOpenCodeV2Provider({
+      npm: '@ai-sdk/openai-compatible',
+      options: { baseURL: 'https://x.example.com/v1' },
+      models: { r1: { id: 'r1', reasoning: true, tool_call: true } },
+    })
+    const models = converted.models as Record<string, Record<string, unknown>>
+    const caps = models.r1.capabilities as Record<string, unknown>
+    expect(caps.reasoning).toEqual({ supported: true })
+    expect(caps.tools).toBe(true)
   })
 })
