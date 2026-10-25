@@ -1616,9 +1616,10 @@ async fn probe_one_model<S: EventSink>(
         } else {
             LimitSource::Unknown
         };
-        if let Some(err) = limit_outcome.error.as_ref() {
-            info.errors.push(err.clone());
-        }
+        // 上限反探失败（如服务端拒绝 max_tokens=999999 探针）是「探不到上限」
+        // 的预期结果，日志里已有 Warn 记录；不计入 model.errors —— 否则错误
+        // 徽标会被这类无害条目刷屏（曾致 MiniMax 端点出现 6 条「未知错误」）。
+        let _ = limit_outcome.error;
         emit_log(
             &app,
             &state,

@@ -238,10 +238,14 @@ export const useProbeStore = defineStore('probe', () => {
       models.value[index] = payload.model
     } else {
       models.value.push(payload.model)
-      // 新完成的模型默认被勾选：绝大多数用户希望「全部生成」
-      if (!selectedIds.value.includes(payload.model.id)) {
-        selectedIds.value.push(payload.model.id)
-      }
+    }
+    // 模型不可用（已下线 / 未对账号开放）：自动取消勾选，避免生成配置时
+    // 把废模型带上；其余模型默认勾选（绝大多数用户希望「全部生成」）
+    const unavailable = (payload.model.errors ?? []).some((e) => e.kind === 'modelNotFound')
+    if (unavailable) {
+      selectedIds.value = selectedIds.value.filter((id) => id !== payload.model.id)
+    } else if (!selectedIds.value.includes(payload.model.id)) {
+      selectedIds.value.push(payload.model.id)
     }
     completed.value = payload.completed
     total.value = payload.total
@@ -293,11 +297,22 @@ export const useProbeStore = defineStore('probe', () => {
     }
     finishedAt.value = Date.now()
 
-    // 默认全选尚未被选中的新模型
+    // 默认全选尚未被选中的新模型；「模型不可用」（已下线 / 未对账号开放）
+    // 的自动排除且不补勾 —— 与 applyModelDone 的取消勾选保持同一语义，
+    // 避免整轮结束/状态同步时又把它们加回生成清单。
+    const unavailableIds = new Set(
+      summary.models
+        .filter((m) => (m.errors ?? []).some((e) => e.kind === 'modelNotFound'))
+        .map((m) => m.id),
+    )
     for (const model of summary.models) {
+      if (unavailableIds.has(model.id)) continue
       if (!selectedIds.value.includes(model.id)) {
         selectedIds.value.push(model.id)
       }
+    }
+    if (unavailableIds.size > 0) {
+      selectedIds.value = selectedIds.value.filter((id) => !unavailableIds.has(id))
     }
 
     pruneSelection()

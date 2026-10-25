@@ -1,6 +1,6 @@
 {
   "$schema": "internal",
-  "dictionaryVersion": "2026.10.09",
+  "dictionaryVersion": "2026.10.26",
   "entries": [
     {
       "matchPatterns": [
@@ -508,6 +508,50 @@
       "contextLimit": 32768,
       "maxOutputLimit": 4096,
       "note": "百川智能 Baichuan 系列"
+    },
+    {
+      "matchPatterns": [
+        "minimax-m2*",
+        "minimax-m3*"
+      ],
+      "contextLimit": 204800,
+      "maxOutputLimit": 131072,
+      "note": "MiniMax M2 / M3 系列（M2.1 / M2.5 / M2.7 / M3 及 highspeed 变体；M3 系限值以官方文档为准）"
+    },
+    {
+      "matchPatterns": [
+        "claude-haiku-4*"
+      ],
+      "contextLimit": 200000,
+      "maxOutputLimit": 64000,
+      "note": "Anthropic Claude Haiku 4.5"
+    },
+    {
+      "matchPatterns": [
+        "deepseek-v3.1*",
+        "deepseek-v3.2*",
+        "deepseek-v4*"
+      ],
+      "contextLimit": 128000,
+      "maxOutputLimit": 8192,
+      "note": "DeepSeek V3.1 / V3.2 / V4 系列（128K 上下文）"
+    },
+    {
+      "matchPatterns": [
+        "gemini-3*"
+      ],
+      "contextLimit": 1048576,
+      "maxOutputLimit": 65536,
+      "note": "Google Gemini 3 系列（Pro / Flash）"
+    },
+    {
+      "matchPatterns": [
+        "kimi-k2.5*",
+        "kimi-latest*"
+      ],
+      "contextLimit": 256000,
+      "maxOutputLimit": 16384,
+      "note": "月之暗面 Kimi K2.5 / kimi-latest"
     }
   ]
 }

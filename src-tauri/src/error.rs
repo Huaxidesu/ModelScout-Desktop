@@ -172,13 +172,14 @@ impl ProbeError {
                 || lower.contains("model_not_found")
                 || lower.contains("model not found")
                 || lower.contains("no such model")
+                || lower.contains("no longer available")
                 || lower.contains("模型不存在")
                 || lower.contains("未开通")
                 || (lower.contains("不支持") && lower.contains("model"));
             if model_missing {
                 err.kind = ProbeErrorKind::ModelNotFound;
-                err.message = "服务端返回 404，但响应正文表明是「模型不可用 / 未开通」，\
-                               而非 Base URL 错误。该模型可能未对当前账号开放，\
+                err.message = "服务端返回 404，但响应正文表明是「模型不可用 / 未开通 / 已下线」，\
+                               而非 Base URL 错误。该模型可能未对当前账号开放或已下线，\
                                建议更换模型或确认订阅状态。"
                     .to_string();
             }
