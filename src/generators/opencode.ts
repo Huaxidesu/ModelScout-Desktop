@@ -327,7 +327,7 @@ export function renderOpenCodeJsonc(context: GenerateContext): string {
   lines.push(`  // 由 ModelScout 于 ${now} 自动生成`)
   lines.push('  //')
   if (ctx.apiKeyMode === 'env') {
-    lines.push('  // 密钥以 {env:VAR} 形式引用，使用前请先设置环境变量：')
+    lines.push('  // 密钥以环境变量引用形式写入，使用前请先设置环境变量：')
     lines.push(`  //   ${ctx.envVarName}`)
   } else if (ctx.apiKeyField) {
     lines.push('  // ⚠️ 本文件包含明文 API Key，请勿提交到公开仓库或分享给他人。')
@@ -367,7 +367,7 @@ export function renderOpenCodeProviderFragment(context: GenerateContext): string
   lines.push('// 由 ModelScout 自动生成 —— 粘贴到你已有 opencode.json 的顶层对象里')
   lines.push('//')
   if (ctx.apiKeyMode === 'env') {
-    lines.push(`// 密钥以 {env:VAR} 引用，使用前请先设置环境变量 ${ctx.envVarName}`)
+    lines.push(`// 密钥以环境变量引用形式写入（变量名见下一行），使用前请先设置：${ctx.envVarName}`)
   } else if (ctx.apiKeyField) {
     lines.push('// ⚠️ 本片段包含明文 API Key，请勿分享或提交到公开仓库')
   } else {
@@ -694,7 +694,7 @@ function v2HeaderLines(ctx: ResolvedContext): string[] {
   lines.push(`  // 由 ModelScout 于 ${now} 自动生成`)
   lines.push('  //')
   if (ctx.apiKeyMode === 'env') {
-    lines.push('  // 密钥以 {env:VAR} 形式引用，使用前请先设置环境变量：')
+    lines.push('  // 密钥以环境变量引用形式写入，使用前请先设置环境变量：')
     lines.push(`  //   ${ctx.envVarName}`)
   } else if (ctx.apiKeyField) {
     lines.push('  // ⚠️ 本文件包含明文 API Key，请勿提交到公开仓库或分享给他人。')
@@ -738,7 +738,7 @@ export function renderOpenCodeV2ProviderFragment(
   lines.push('// 由 ModelScout 自动生成 —— 粘贴到你已有 opencode 配置的顶层对象里')
   lines.push('//')
   if (ctx.apiKeyMode === 'env') {
-    lines.push(`// 密钥以 {env:VAR} 引用，使用前请先设置环境变量 ${ctx.envVarName}`)
+    lines.push(`// 密钥以环境变量引用形式写入（变量名见下一行），使用前请先设置：${ctx.envVarName}`)
   } else if (ctx.apiKeyField) {
     lines.push('// ⚠️ 本片段包含明文 API Key，请勿分享或提交到公开仓库')
   } else {

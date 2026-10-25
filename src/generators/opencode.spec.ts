@@ -290,6 +290,18 @@ describe('provider 层 —— 命名与密钥', () => {
     expect(config.provider.local.options).not.toHaveProperty('apiKey')
   })
 
+  it('渲染输出的注释里不携带 {env:VAR} 字面占位符（会污染环境变量引用扫描）', () => {
+    const context = {
+      baseUrl: 'https://api.example.com/v1',
+      models: [],
+      apiKeyMode: 'env' as const,
+      apiKeyEnv: 'MY_KEY',
+    }
+    for (const text of [renderOpenCodeJsonc(context), renderOpenCodeProviderFragment(context)]) {
+      expect(text).not.toContain('{env:VAR}')
+    }
+  })
+
   it('env 模式下写 {env:VAR} 引用，且不泄露明文', () => {
     const config = buildOpenCodeConfig(
       makeContext({ apiKey: 'sk-secret', apiKeyMode: 'env', providerKey: 'deepseek-local' }),

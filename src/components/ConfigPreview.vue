@@ -34,7 +34,7 @@ import {
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 
 import { useProbe } from '@/composables/useProbe'
-import { inspectToolConfig, saveConfigFile } from '@/api/commands'
+import { inspectToolConfig, saveConfigFile, statusEnvSecret } from '@/api/commands'
 import QuickFillDialog from '@/components/QuickFillDialog.vue'
 import EnvSecretDialog from '@/views/configManager/EnvSecretDialog.vue'
 import {
@@ -192,9 +192,42 @@ const envVarName = computed<string>({
   },
 })
 
-/** 「🔑 一键用环境变量」：切到 env 写法（变量名用当前推断/已填值） */
-function useEnvKeyMode(): void {
+/**
+ * 「🔑 一键用环境变量」：切到 env 写法（变量名用当前推断/已填值）。
+ *
+ * 切换后检查该变量在本机是否存在；不存在则弹出创建对话框
+ * （变量名锁定、只填密钥值）——一键下来的是「能直接跑通」的配置，
+ * 否则写出的 {env:…} 指向一个不存在的变量。取消创建不阻塞，
+ * 用户可以之后自行设置或用配置管理建。
+ */
+async function useEnvKeyMode(): Promise<void> {
   apiKeyMode.value = 'env'
+  const name = envVarName.value.trim()
+  if (!name) return
+  try {
+    const status = await statusEnvSecret(name)
+    if (!status.exists) {
+      envCreateInitialName.value = name
+      envCreateDialogShow.value = true
+    }
+  } catch {
+    /* 查询失败不弹窗，写入前还有第二道提示（确认写入时兜底） */
+  }
+}
+
+/** 「不存在→创建」对话框（变量名锁定） */
+const envCreateDialogShow = ref(false)
+const envCreateDialogRef = ref<InstanceType<typeof EnvSecretDialog> | null>(null)
+const envCreateInitialName = ref('')
+
+/** 创建成功提示（覆盖/新建共用一条逻辑） */
+function onEnvCreateSaved(name: string): void {
+  const note = envCreateDialogRef.value?.savedNote
+  if (note && !note.persisted && note.note) {
+    message.warning(`${name}：${note.note}`, { duration: 8000 })
+  } else {
+    message.success(`${name} 已创建：本应用内立即生效${note?.persisted ? '，系统持久环境已更新' : ''}。`, { duration: 6000 })
+  }
 }
 
 /** 「✎ 编辑变量名」对话框（内含本机已有变量补全） */
@@ -1103,6 +1136,16 @@ watch(
       picker
       :initial-name="envVarName"
       @saved="onEnvNamePicked"
+    />
+
+    <!-- ---------- 一键 env 后变量不存在 → 创建 ---------- -->
+    <EnvSecretDialog
+      ref="envCreateDialogRef"
+      v-model:show="envCreateDialogShow"
+      :title="`创建环境变量 ${envCreateInitialName}`"
+      :initial-name="envCreateInitialName"
+      lock-name
+      @saved="onEnvCreateSaved"
     />
   </section>
 </template>

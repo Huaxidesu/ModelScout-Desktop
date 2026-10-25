@@ -40,7 +40,13 @@ import { collectEnvVarRefs, missingEnvVars, type EnvRefSource } from '@/utils/en
 import { useKeyButlerStore } from '@/stores/keyButler'
 import ProviderEditDialog from './ProviderEditDialog.vue'
 import EnvSecretDialog from './EnvSecretDialog.vue'
+import RawFileEditorDialog from './RawFileEditorDialog.vue'
 import type { EnvSecretInfo, ToolConfigFile } from '@/types/contracts'
+
+const props = defineProps<{
+  /** 页签是否处于激活态(激活时刷新环境变量清单,捕捉其他入口的增删) */
+  active?: boolean
+}>()
 
 const message = useMessage()
 const dialog = useDialog()
@@ -136,6 +142,15 @@ onMounted(() => {
   // 环境变量清单一并加载（本地命令，无磁盘扫描）
   void loadEnvSecrets()
 })
+
+// 页签激活时刷新环境变量清单:变量可能在别处(生成配置的创建提示、
+// 配置管理以外的入口)被增删,面板显示的是本组件持有的快照
+watch(
+  () => props.active,
+  (active) => {
+    if (active) void loadEnvSecrets()
+  },
+)
 
 /* ---- 环境变量密钥子模块 ---- */
 
@@ -245,6 +260,23 @@ function onEnvSaved(name: string): void {
     )
   }
   void loadEnvSecrets()
+}
+
+/* ---- 编辑原始文件 ---- */
+
+const rawEditorShow = ref(false)
+const rawEditorPath = ref('')
+const rawEditorTool = ref<'opencode' | 'dsh'>('opencode')
+
+function openRawEditor(tool: 'opencode' | 'dsh', path: string): void {
+  rawEditorTool.value = tool
+  rawEditorPath.value = path
+  rawEditorShow.value = true
+}
+
+function onRawSaved(): void {
+  message.success('原始文件已保存（原文件已备份），正在重新识别…')
+  void scan()
 }
 
 function confirmEnvDelete(secret: EnvSecretInfo): void {
@@ -497,6 +529,9 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
           <span class="text-[11px] text-ms-text-faint" :title="group.file.path">
             {{ shortenPath(group.file.path) }}
           </span>
+          <NButton size="tiny" quaternary @click="openRawEditor('opencode', group.file.path)">
+            ✎ 编辑原始文件
+          </NButton>
         </div>
         <div class="ms-panel overflow-hidden">
           <div
@@ -577,6 +612,9 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
           <span class="text-[11px] text-ms-text-faint" :title="group.file.path">
             {{ shortenPath(group.file.path) }}
           </span>
+          <NButton size="tiny" quaternary @click="openRawEditor('dsh', group.file.path)">
+            ✎ 编辑原始文件
+          </NButton>
         </div>
         <div class="ms-panel overflow-hidden">
           <div
@@ -710,6 +748,14 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
       :initial-name="envDialogInitialName"
       :lock-name="envDialogLockName"
       @saved="onEnvSaved"
+    />
+
+    <!-- 原始文件编辑器 -->
+    <RawFileEditorDialog
+      v-model:show="rawEditorShow"
+      :tool="rawEditorTool"
+      :path="rawEditorPath"
+      @saved="onRawSaved"
     />
 
     <!-- 绑定密钥对话框 -->

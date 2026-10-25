@@ -312,7 +312,10 @@ const statusLabel = computed(
           </div>
 
           <!-- ---- 主体：配置管理 ---- -->
-          <ConfigManagerView v-show="activeTab === 'config'" />
+          <ConfigManagerView
+            v-show="activeTab === 'config'"
+            :active="activeTab === 'config'"
+          />
 
           <!-- ---- 主体：Key 管家（Beta） ---- -->
           <!-- v-show 切换以保留列表、过滤条件与抽屉展开状态；

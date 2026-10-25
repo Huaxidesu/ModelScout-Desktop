@@ -27,7 +27,7 @@ import {
   useMessage,
 } from 'naive-ui'
 
-import { inspectToolConfig, writeToolConfig } from '@/api/commands'
+import { inspectToolConfig, statusEnvSecret, setEnvSecret, writeToolConfig } from '@/api/commands'
 import { mergeOpenCodeIntoText } from '@/generators/opencodeMerge'
 import { mergeDshIntoText } from '@/generators/dsh'
 import { detectOpenCodeVersion } from '@/generators/configScan'
@@ -275,6 +275,10 @@ function computeMerge(): void {
 }
 
 // 打开时重置并读取；上下文（模型选择/键名等）变化时重算合并，文件内容不重读
+//
+// targetPath 特意**保留上次会话的值**：用户在本次会话里已明确选过目标文件，
+// 再次打开时静默回落到默认路径，会把内容写到（默认的）真实配置里 —— 曾因此
+// 发生测试误写。只有用户清空路径输入框才会回到默认推断。
 watch(
   () => props.show,
   (show) => {
@@ -284,7 +288,6 @@ watch(
       mergeModeLabel.value = ''
       mergeWarnings.value = []
       fatal.value = ''
-      targetPath.value = ''
       overridesOpen.value = false
       overrideRows.value = []
       void reload()
@@ -305,6 +308,87 @@ watch(
 
 async function confirmWrite(): Promise<void> {
   if (!canWrite.value) return
+  // 写入前兜底：合并结果里引用的环境变量若有本机不存在的，先弹窗
+  // 问是否顺手创建（可跳过直接写）——否则写出的配置跑不起来。
+  const missing = await findMissingEnvRefs()
+  if (missing.length > 0) {
+    pendingMissing.value = missing
+    missingValues.value = {}
+    missingPromptShow.value = true
+    return
+  }
+  await doWrite()
+}
+
+/**
+ * 收集合并结果里引用、但本机不存在的环境变量名。
+ *
+ * OpenCode 的引用形态是 `{env:NAME}`；dsh 写的是 `apiKeyEnv: NAME` 键，
+ * 从生成上下文里取。查询失败按存在处理（不阻塞写入）。
+ */
+async function findMissingEnvRefs(): Promise<string[]> {
+  // 只扫代码行:注释里的 {env:…}(如文档示例)不是真实引用
+  const codeLines = mergedText.value
+    .split('\n')
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join('\n')
+  const refs = new Set<string>(
+    [...codeLines.matchAll(/\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((m) => m[1]),
+  )
+  if (props.tool === 'dsh' && props.context.apiKeyMode === 'env' && props.context.apiKeyEnv?.trim()) {
+    refs.add(props.context.apiKeyEnv.trim())
+  }
+  const missing: string[] = []
+  for (const name of refs) {
+    try {
+      const status = await statusEnvSecret(name)
+      if (!status.exists) missing.push(name)
+    } catch {
+      /* 查询失败视为存在 */
+    }
+  }
+  return missing
+}
+
+/** 缺失变量提示对话框状态 */
+const missingPromptShow = ref(false)
+const pendingMissing = ref<string[]>([])
+const missingValues = ref<Record<string, string>>({})
+
+/** 用户选择「仍要写入」：不创建，直接落盘 */
+async function writeWithoutCreating(): Promise<void> {
+  missingPromptShow.value = false
+  await doWrite()
+}
+
+/** 用户选择「创建并写入」：先创建填了值的变量，再落盘 */
+async function createThenWrite(): Promise<void> {
+  const created: string[] = []
+  for (const name of pendingMissing.value) {
+    const value = (missingValues.value[name] ?? '').trim()
+    if (!value) continue
+    try {
+      await setEnvSecret(name, value)
+      created.push(name)
+    } catch (err) {
+      message.error(`创建 ${name} 失败：${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+  }
+  missingPromptShow.value = false
+  if (created.length > 0) {
+    const skipped = pendingMissing.value.filter((n) => !(missingValues.value[n] ?? '').trim())
+    message.success(
+      `已创建 ${created.join('、')}（本应用内立即生效${created.length > 0 ? '' : ''}）` +
+        (skipped.length > 0 ? `；${skipped.join('、')} 未创建（留空跳过）` : ''),
+      { duration: 7000 },
+    )
+  }
+  await doWrite()
+}
+
+/** 实际落盘（原 confirmWrite 主体） */
+async function doWrite(): Promise<void> {
   writing.value = true
   try {
     const result = await writeToolConfig(targetPath.value.trim(), mergedText.value, true)
@@ -544,6 +628,51 @@ function close(): void {
         </div>
       </div>
     </div>
+  </NModal>
+
+  <!-- 写入前兜底：引用的环境变量本机不存在 → 是否顺手创建 -->
+  <NModal
+    :show="missingPromptShow"
+    preset="card"
+    title="引用的环境变量不存在"
+    style="width: 480px"
+    :mask-closable="false"
+    @update:show="(v: boolean) => (missingPromptShow = v)"
+  >
+    <div class="flex flex-col gap-3">
+      <div class="text-[11px] leading-relaxed text-ms-text-dim">
+        即将写入的配置引用了以下环境变量，但本机找不到它们。现在填值即可顺手创建
+        （本应用内立即生效，Windows 会写入系统持久环境，<strong>新开的</strong>程序才能读到）；
+        也可以跳过，之后在配置管理 → 环境变量密钥里再建。
+      </div>
+      <div
+        v-for="name in pendingMissing"
+        :key="name"
+        class="flex flex-col gap-1 rounded border border-ms-border bg-ms-panel-2 p-2.5"
+      >
+        <div class="flex items-center justify-between">
+          <span class="font-mono text-[12px] text-ms-accent">{{ name }}</span>
+          <NTag size="tiny" :bordered="false" type="warning">本机不存在</NTag>
+        </div>
+        <NInput
+          :value="missingValues[name] ?? ''"
+          type="password"
+          show-password-on="click"
+          placeholder="密钥值（留空 = 跳过这个变量，直接写入配置）"
+          spellcheck="false"
+          @update:value="(v: string) => (missingValues[name] = v)"
+        />
+      </div>
+    </div>
+    <template #footer>
+      <div class="flex items-center justify-between gap-2">
+        <NButton size="small" quaternary @click="missingPromptShow = false">取消写入</NButton>
+        <div class="flex items-center gap-2">
+          <NButton size="small" quaternary @click="writeWithoutCreating()">仍要写入</NButton>
+          <NButton size="small" type="primary" @click="createThenWrite()">创建并写入</NButton>
+        </div>
+      </div>
+    </template>
   </NModal>
 </template>
 
