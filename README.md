@@ -4,7 +4,7 @@
   <p>大语言模型 API 能力探测与配置生成工具</p>
 </div>
 
-支持连接 OpenAI 兼容的 API 服务，批量检测模型的工具调用、图片输入、推理能力及 Token 限制，并根据探测结果生成 OpenCode、DeepSeek Harness（dsh）配置文件，支持一键写入本机配置（带左右对比预览与自动备份）。
+支持连接 OpenAI 兼容的 API 服务，批量检测模型的工具调用、图片输入、推理能力及 Token 限制，并根据探测结果生成 OpenCode、DeepSeek Harness（dsh）配置文件，支持一键写入本机配置。
 
 <p align="center">
   <a href="../../releases/latest"><img src="https://img.shields.io/badge/下载-最新版本-14b8a6?style=for-the-badge" alt="下载最新版本"></a>
