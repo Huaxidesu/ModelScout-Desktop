@@ -7,6 +7,9 @@
  *   1. `server.port = 1420` 与 `strictPort: true`
  *      —— 必须与 src-tauri/tauri.conf.json 的 `build.devUrl` 完全一致，
  *         否则 Tauri 窗口加载不到前端。
+ *      `devUrl` 用 `127.0.0.1` 而不是 `localhost`：Windows 上 `localhost`
+ *      会被解析成 IPv6 的 `::1`，Vite 随之只绑 IPv6，而 WebView2 走 IPv4
+ *      就连不上 —— 表现为窗口白屏/黑屏（2026-10-29 实机踩中）。
  *   2. `clearScreen: false`
  *      —— 让 Rust 端的编译错误不被 Vite 清屏覆盖，便于排障。
  *   3. `envPrefix: ['VITE_', 'TAURI_']`
@@ -47,7 +50,9 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // 显式绑 IPv4 回环：`false` 会绑到 `localhost`，Windows 上常只绑 `::1`，
+    // WebView2 连 127.0.0.1 时直接失败（窗口空白）。与 devUrl 保持一致。
+    host: host || '127.0.0.1',
     hmr: host
       ? {
           protocol: 'ws',
