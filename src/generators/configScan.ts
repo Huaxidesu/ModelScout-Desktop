@@ -13,6 +13,7 @@ import { load as yamlLoad } from 'js-yaml'
 
 import { parseJsonc } from '@/utils/jsonc'
 import { DSH_LLM_PLUGIN_ID } from './dsh'
+import { readProviderComments } from './opencodeComments'
 
 // ---- OpenCode ----
 
@@ -46,6 +47,12 @@ export interface OpenCodeScanEntry {
     | { mode: 'none' }
   /** 模型 id 列表 */
   modelIds: string[]
+  /**
+   * 该条目上方的 ModelScout 标记注释正文（去掉 `//` 前缀）；没有则为 null。
+   * 由 `parseOpenCodeProviders` 在解析完成后按原文位置补齐
+   * （纯对象解析拿不到位置信息），见 `opencodeComments.ts`。
+   */
+  comment: string | null
 }
 
 /**
@@ -95,6 +102,7 @@ function parseOpenCodeContainer(
       baseURL: typeof options.baseURL === 'string' ? options.baseURL : '',
       apiKey,
       modelIds: models,
+      comment: null, // 由 parseOpenCodeProviders 按原文位置补齐
     })
   }
   return entries
@@ -131,6 +139,12 @@ export function parseOpenCodeProviders(content: string): ScanParseResult<OpenCod
   }
   if (!found) {
     return { entries: [], errors: ['顶层没有 provider(s) 对象。'] }
+  }
+
+  // 注释要按原文位置找（对象里已经没有注释了），补进每个条目
+  const comments = readProviderComments(content)
+  for (const entry of entries) {
+    entry.comment = comments.get(entry.key) ?? null
   }
 
   return { entries, errors }

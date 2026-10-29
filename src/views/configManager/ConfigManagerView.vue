@@ -41,6 +41,7 @@ import { useKeyButlerStore } from '@/stores/keyButler'
 import ProviderEditDialog from './ProviderEditDialog.vue'
 import EnvSecretDialog from './EnvSecretDialog.vue'
 import RawFileEditorDialog from './RawFileEditorDialog.vue'
+import CommentEditDialog from './CommentEditDialog.vue'
 import type { EnvSecretInfo, ToolConfigFile } from '@/types/contracts'
 
 const props = defineProps<{
@@ -345,6 +346,29 @@ async function onEdited(): Promise<void> {
   await scan()
 }
 
+/* ---- 编辑条目注释（provider 上方那行 ModelScout 标记注释） ---- */
+
+const commentShow = ref(false)
+const commentTarget = ref<{
+  path: string
+  providerKey: string
+  current: string | null
+  autoText: string
+} | null>(null)
+
+/** 打开注释编辑；自动文案与一键填写写的那行保持同一格式 */
+function openComment(path: string, entry: OpenCodeScanEntry): void {
+  commentTarget.value = {
+    path,
+    providerKey: entry.key,
+    current: entry.comment,
+    autoText: `${entry.name || entry.key} · ${entry.modelIds.length} 个模型 · ModelScout ${
+      new Date().toISOString().slice(0, 10)
+    }`,
+  }
+  commentShow.value = true
+}
+
 /* ---- Key 管家联动：Key 管家 → 配置（绑定密钥） ---- */
 
 /** 绑定对话框状态 */
@@ -587,6 +611,9 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
                 </template>
                 只有配置里写了明文 Key 的 provider 才能一键导入；环境变量引用/无 Key 的请手动导入。
               </NTooltip>
+              <NButton size="tiny" quaternary @click="openComment(group.file.path, entry)">
+                注释
+              </NButton>
               <NButton size="tiny" quaternary @click="openEdit('opencode', group.file.path, entry.key)">
                 编辑
               </NButton>
@@ -600,6 +627,10 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
             <!-- 模型清单 -->
             <div v-if="entry.modelIds.length > 0" class="w-full pl-1 text-[10px] text-ms-text-faint">
               {{ entry.modelIds.join(' · ') }}
+            </div>
+            <!-- 条目上方那行 ModelScout 注释（可在「注释」里改） -->
+            <div v-if="entry.comment" class="w-full truncate pl-1 text-[10px] text-ms-text-faint">
+              <span class="font-mono">// {{ entry.comment }}</span>
             </div>
           </div>
         </div>
@@ -756,6 +787,17 @@ function confirmRemove(tool: 'opencode' | 'dsh', path: string, providerKey: stri
       :tool="rawEditorTool"
       :path="rawEditorPath"
       @saved="onRawSaved"
+    />
+
+    <!-- 条目注释编辑（provider 上方那行 ModelScout 标记注释） -->
+    <CommentEditDialog
+      v-model:show="commentShow"
+      :path="commentTarget?.path ?? ''"
+      :provider-key="commentTarget?.providerKey ?? ''"
+      :content="fileContent(commentTarget?.path ?? '')"
+      :current="commentTarget?.current ?? null"
+      :auto-text="commentTarget?.autoText ?? ''"
+      @saved="onEdited"
     />
 
     <!-- 绑定密钥对话框 -->

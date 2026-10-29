@@ -271,6 +271,27 @@ describe('upsertOpenCodeProvider / removeOpenCodeProvider（配置管理页）',
     expect(Object.keys(parsed.provider)).toEqual(['a', 'c'])
   })
 
+  it('remove 连带删掉该条目上方的 ModelScout 标记注释', () => {
+    const withComments = `{
+  "providers": {
+    // 用户自己的备注
+    // Keep · 2 个模型 · ModelScout 2026-10-28
+    "keep": { "package": "aisdk:x" },
+    // Drop · 8 个模型 · ModelScout 2026-10-25
+    "drop": { "package": "aisdk:x" }
+  }
+}`
+    const result = removeOpenCodeProvider(withComments, 'drop')
+    expect(result).not.toBeNull()
+    // 被删条目的标记注释一起消失，不再留下孤儿注释
+    expect(result!.text).not.toContain('Drop · 8 个模型')
+    // 别的条目、以及用户自己写的注释都不受影响
+    expect(result!.text).toContain('用户自己的备注')
+    expect(result!.text).toContain('Keep · 2 个模型')
+    const parsed = parseJsonc(result!.text) as { providers: Record<string, unknown> }
+    expect(Object.keys(parsed.providers)).toEqual(['keep'])
+  })
+
   it('remove 不存在的键返回 null', () => {
     expect(removeOpenCodeProvider(existing, 'ghost')).toBeNull()
   })

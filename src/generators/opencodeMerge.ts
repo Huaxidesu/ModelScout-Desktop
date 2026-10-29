@@ -36,6 +36,7 @@ import {
   type GenerateContext,
   type OpenCodeV2ExtrasMap,
 } from './opencode'
+import { removeMarkerComments } from './opencodeComments'
 
 /** 合并选项 */
 export interface OpenCodeMergeOptions {
@@ -570,7 +571,30 @@ export function upsertOpenCodeProvider(
 }
 
 /**
- * 从配置里删除一个 provider（原位摘除，注释保留）。
+ * 在文本里定位一个 provider 成员（删除流程用，需要原始下标）。
+ *
+ * @returns 结构不符或找不到时返回 null
+ */
+function locateProviderMember(
+  text: string,
+  memberKey: 'providers' | 'provider',
+  providerKey: string,
+): { scanner: JsoncScanner; keyStart: number; valueEnd: number } | null {
+  const scanner = new JsoncScanner(text)
+  const rootOpen = findRootObject(text)
+  if (rootOpen < 0) return null
+  const providerMember = scanner.listMembers(rootOpen).get(memberKey)
+  if (!providerMember || text[providerMember.valueStart] !== '{') return null
+  const target = scanner.listMembers(providerMember.valueStart).get(providerKey)
+  return target ? { scanner, keyStart: target.keyStart, valueEnd: target.valueEnd } : null
+}
+
+/**
+ * 从配置里删除一个 provider（原位摘除）。
+ *
+ * 连同它上方那行 ModelScout 标记注释一起删掉 —— 否则每删一个 provider
+ * 就在文件里留下一条没有归属的注释，越积越多（见 opencodeComments.ts）。
+ * 注释在成员之前，删完偏移会变，因此删注释后要重新定位一次成员。
  *
  * @returns 不存在该 provider 时返回 null
  */
@@ -600,25 +624,25 @@ export function removeOpenCodeProvider(
   const memberKey = providerMemberKey(root)
 
   try {
-    const scanner = new JsoncScanner(existingText)
-    const rootOpen = findRootObject(existingText)
-    if (rootOpen < 0) throw new Error('root object not found')
-    const rootMembers = scanner.listMembers(rootOpen)
-    const providerMember = rootMembers.get(memberKey)
-    if (!providerMember || existingText[providerMember.valueStart] !== '{') return null
+    const located = locateProviderMember(existingText, memberKey, providerKey)
+    if (!located) return null
 
-    const providerMembers = scanner.listMembers(providerMember.valueStart)
-    const target = providerMembers.get(providerKey)
-    if (!target) return null
+    // 先删标记注释，再在新文本上重新定位成员（下标已整体前移）
+    const withoutComment = removeMarkerComments(existingText, located.keyStart)
+    const work =
+      withoutComment === existingText
+        ? located
+        : locateProviderMember(withoutComment, memberKey, providerKey)
+    if (!work) return null
 
     // 摘除区间：从成员键到值结束；把其后紧随的逗号（若有）一并吞掉，
     // 避免留下空元素；成员前的换行/缩进保留（不影响合法性）。
-    let end = target.valueEnd
-    const after = scanner.skipInsignificant(end)
-    if (scanner.source[after] === ',') {
+    let end = work.valueEnd
+    const after = work.scanner.skipInsignificant(end)
+    if (work.scanner.source[after] === ',') {
       end = after + 1
     }
-    const next = existingText.slice(0, target.keyStart) + existingText.slice(end)
+    const next = withoutComment.slice(0, work.keyStart) + withoutComment.slice(end)
     return { mode: 'splice', text: ensureTrailingNewline(next), warnings: [] }
   } catch {
     // 降级：对象级删除后重写

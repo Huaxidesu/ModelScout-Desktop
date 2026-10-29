@@ -154,3 +154,26 @@ describe('工具函数', () => {
     expect(parseJsonc(OPENCODE_SAMPLE)).toBeTruthy()
   })
 })
+
+describe('OpenCode 条目的 ModelScout 标记注释', () => {
+  const WITH_COMMENTS = `{
+  "providers": {
+    // Intern AI · 2 个模型 · ModelScout 2026-10-29
+    "intern": { "package": "aisdk:@ai-sdk/openai-compatible", "models": { "a": {}, "b": {} } },
+    "bare": { "package": "aisdk:@ai-sdk/openai-compatible", "models": {} }
+  }
+}`
+
+  it('有标记注释的条目读出 comment，没有的为 null', () => {
+    const { entries } = parseOpenCodeProviders(WITH_COMMENTS)
+    const byKey = new Map(entries.map((e) => [e.key, e]))
+    expect(byKey.get('intern')?.comment).toBe('Intern AI · 2 个模型 · ModelScout 2026-10-29')
+    expect(byKey.get('bare')?.comment).toBeNull()
+  })
+
+  it('没有注释的文件不报错，comment 全为 null', () => {
+    const { entries, errors } = parseOpenCodeProviders(OPENCODE_SAMPLE)
+    expect(errors).toHaveLength(0)
+    expect(entries.every((e) => e.comment === null)).toBe(true)
+  })
+})
