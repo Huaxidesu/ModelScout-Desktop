@@ -17,15 +17,24 @@
  *     tool_call?:   boolean         // 顶层字段，不是 capabilities.toolcall
  *     attachment?:  boolean         // 顶层字段
  *     reasoning?:   boolean         // 顶层字段
- *     limit?:       { context: number, output: number }   // 二者都必填
+ *     limit?:       { context?: number, output?: number }  // 两个字段各自可选
  *   }
  *
  * 两个 schema 约束（本文件据此实现）：
  * 1. 模型条目 `additionalProperties: false`，嵌套的
  *    `capabilities: { toolcall, ... }` 是非法键，会使整份配置校验失败；
  *    能力开关必须以 `tool_call` / `attachment` / `reasoning` 平铺在条目上。
- * 2. `limit` 对象同样 `additionalProperties: false`，且 `context` / `output`
- *    均为必填，不能只写其中一个。
+ * 2. `limit` 对象同样 `additionalProperties: false`，但 `context` / `output`
+ *    都是**可选**字段，可以只写其中一个。实测 `opencode debug config`：
+ *    `{ "context": 1000000 }` 与 `{ "output": 8192 }` 单独出现都原样保留，
+ *    而 `{ "bogus_field": 1 }` 会被剥成 `{}` —— 说明校验确实在跑，
+ *    只是不要求二者成对（早期版本按「必须成对」实现，已纠正）。
+ *
+ * `output` 的取值原则：只写「用户明确给出」的值，不替用户决定。
+ * 部分网关（如 Intern AI 的 tokenplan）按请求里的 `max_tokens` **预扣**
+ * 配额，把模型自报的 1M 写进去会让每一次请求都直接 429 quota exceeded。
+ * 因此输出上限的默认值由上层（modelOverrides 的参数表）决定，本文件
+ * 只负责「有值就如实写」。
  *
  * 安全说明：`options.apiKey` 支持明文（默认）或 `{env:VAR}` 引用
  * （密钥留在环境变量里），由 `GenerateContext.apiKeyMode` 控制。
@@ -79,10 +88,10 @@ export interface OpenCodeModelEntry {
   attachment?: boolean
   /** 是否为推理模型 */
   reasoning?: boolean
-  /** 上下文与输出上限（opencode 用于 token 预算计算；二者必须同时存在） */
+  /** 上下文与输出上限（opencode 用于 token 预算计算；两个字段各自可选） */
   limit?: {
-    context: number
-    output: number
+    context?: number
+    output?: number
   }
 }
 
@@ -206,22 +215,16 @@ export function buildModelEntry(model: ModelInfo): OpenCodeModelEntry {
     entry.reasoning = true
   }
 
-  // 只有在上限已知时才写入 limit，避免写入凭空的数字。
-  // schema 要求 context 与 output 同时存在，因此要么都写、要么都不写。
-  if (model.contextLimit > 0 || model.maxOutputLimit > 0) {
-    entry.limit = {
-      context: model.contextLimit > 0 ? model.contextLimit : DEFAULT_CONTEXT,
-      output: model.maxOutputLimit > 0 ? model.maxOutputLimit : DEFAULT_OUTPUT,
-    }
-  }
+  // limit 的每个字段只在「确实有值」时才写，不补凭空造的回退值：
+  // 写一个错的数字，比不写更容易在真实网关上报错（见文件头 output 说明）。
+  // 两个字段都没有时不写 limit 整块。
+  const limit: NonNullable<OpenCodeModelEntry['limit']> = {}
+  if (model.contextLimit > 0) limit.context = model.contextLimit
+  if (model.maxOutputLimit > 0) limit.output = model.maxOutputLimit
+  if (Object.keys(limit).length > 0) entry.limit = limit
 
   return entry
 }
-
-/** 未能探测到上下文上限时使用的回退值（8K，几乎所有模型都支持） */
-const DEFAULT_CONTEXT = 8192
-/** 未能探测到输出上限时使用的回退值（4K，几乎无风险） */
-const DEFAULT_OUTPUT = 4096
 
 // ---- 主生成函数 ----
 
@@ -606,17 +609,13 @@ export function buildV2ModelEntry(
   }
   entry.capabilities = caps
 
-  // limit：v2 三字段均可选；保持与 v1 相同的习惯（context/output 成对），
+  // limit：v2 三字段均可选，各自独立判断（不再强制 context/output 成对）；
   // input 只在用户明确给出时写
-  if (model.contextLimit > 0 || model.maxOutputLimit > 0 || extras?.inputLimit !== undefined) {
-    const limit: NonNullable<OpenCodeV2ModelEntry['limit']> = {}
-    if (model.contextLimit > 0 || model.maxOutputLimit > 0) {
-      limit.context = model.contextLimit > 0 ? model.contextLimit : DEFAULT_CONTEXT
-      limit.output = model.maxOutputLimit > 0 ? model.maxOutputLimit : DEFAULT_OUTPUT
-    }
-    if (extras?.inputLimit !== undefined) limit.input = extras.inputLimit
-    entry.limit = limit
-  }
+  const limit: NonNullable<OpenCodeV2ModelEntry['limit']> = {}
+  if (model.contextLimit > 0) limit.context = model.contextLimit
+  if (model.maxOutputLimit > 0) limit.output = model.maxOutputLimit
+  if (extras?.inputLimit !== undefined) limit.input = extras.inputLimit
+  if (Object.keys(limit).length > 0) entry.limit = limit
 
   return entry
 }

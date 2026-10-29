@@ -221,17 +221,24 @@ describe('buildModelEntry —— 模型条目必须是官方顶层字段', () =>
   })
 })
 
-describe('limit 字段 —— schema 要求 context 与 output 同时存在', () => {
+describe('limit 字段 —— context 与 output 各自可选', () => {
   it('两个上限都已知时原样写入', () => {
     const entry = buildModelEntry(makeModel('m', { contextLimit: 64000, maxOutputLimit: 8192 }))
     expect(entry.limit).toEqual({ context: 64000, output: 8192 })
   })
 
-  it('只知其一也要把另一个补上兜底值（不能只写一个）', () => {
-    const entry = buildModelEntry(makeModel('m', { contextLimit: 0, maxOutputLimit: 8192 }))
-    expect(entry.limit).toBeDefined()
-    expect(entry.limit!.output).toBe(8192)
-    expect(entry.limit!.context).toBeGreaterThan(0)
+  it('只知其一就只写那一个，不补兜底值', () => {
+    const onlyOutput = buildModelEntry(makeModel('m', { contextLimit: 0, maxOutputLimit: 8192 }))
+    expect(onlyOutput.limit).toEqual({ output: 8192 })
+
+    const onlyContext = buildModelEntry(makeModel('m', { contextLimit: 64000, maxOutputLimit: 0 }))
+    expect(onlyContext.limit).toEqual({ context: 64000 })
+  })
+
+  it('输出上限为 0（未指定）时不写 output —— 避免网关按 max_tokens 预扣配额', () => {
+    const entry = buildModelEntry(makeModel('m', { contextLimit: 1048576, maxOutputLimit: 0 }))
+    expect(entry.limit).toEqual({ context: 1048576 })
+    expect(entry.limit).not.toHaveProperty('output')
   })
 
   it('两个都未知时完全不写 limit，而不是编造数字', () => {

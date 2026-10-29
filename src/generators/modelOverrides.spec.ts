@@ -92,14 +92,14 @@ describe('applyOpenCodeRows —— 只写动过的字段', () => {
     })
   })
 
-  it('改了 context 而 output 原本缺失时,limit 成对补齐(回退值)', () => {
+  it('改了 context 而 output 原本缺失时,只写 context,不补 output', () => {
     const bare = { npm: 'x', models: { m: {} } }
     const orig = extractOpenCodeRows(bare, 'v1')
     const rows = JSON.parse(JSON.stringify(orig)) as typeof orig
     rows[0].contextWindow = 131072
     const next = applyOpenCodeRows(bare, rows, orig, 'v1')
     const entry = (next.models as Record<string, Record<string, unknown>>).m
-    expect(entry.limit).toEqual({ context: 131072, output: 4096 })
+    expect(entry.limit).toEqual({ context: 131072 })
     // 没动过的 tool_call 等仍是未设置
     expect(entry.tool_call).toBeUndefined()
   })
@@ -165,6 +165,24 @@ describe('探测数据投影(一键填写)', () => {
     expect(applied[1].contextLimit).toBe(131072)
     // 原数组不被修改
     expect(models[1].supportsTools).toBe('unknown')
+  })
+
+  it('输出上限默认留空：探测值不写进行，覆盖后 maxOutputLimit 归零', () => {
+    const models = [makeModel('m1', { contextLimit: 1048576, maxOutputLimit: 1048576 })]
+    const rows = rowsFromProbeModels(models)
+    expect(rows[0].maxOutput).toBeNull() // 默认不填，不抄模型自报的 1M
+    expect(rows[0].contextWindow).toBe(1048576) // 上下文仍按探测值
+
+    const applied = applyRowsToProbeModels(models, rows)
+    expect(applied[0].maxOutputLimit).toBe(0) // 0 = 未指定 → 生成器省略 limit.output
+    expect(applied[0].contextLimit).toBe(1048576)
+  })
+
+  it('用户手动填了输出上限时正常写回', () => {
+    const models = [makeModel('m1', { contextLimit: 1048576, maxOutputLimit: 1048576 })]
+    const rows = rowsFromProbeModels(models)
+    rows[0].maxOutput = 131072
+    expect(applyRowsToProbeModels(models, rows)[0].maxOutputLimit).toBe(131072)
   })
 })
 

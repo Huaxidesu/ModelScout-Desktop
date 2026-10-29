@@ -284,10 +284,18 @@ function openOverrides(): void {
   overridesOpen.value = true
 }
 
+/**
+ * 生效的编辑行：未展开参数调整时退回探测默认行。
+ * 默认行的输出上限是留空的，因此「默认不填 output」在用户没打开参数表时同样成立。
+ */
+const effectiveRows = computed(() =>
+  overrideRows.value.length > 0 ? overrideRows.value : rowsFromProbeModels(context.value.models),
+)
+
 /** 应用覆盖后的生成上下文：预览文本与一键填写都使用它 */
 const effectiveContext = computed(() => ({
   ...context.value,
-  models: applyRowsToProbeModels(context.value.models, overrideRows.value),
+  models: applyRowsToProbeModels(context.value.models, effectiveRows.value),
 }))
 
 /** 覆盖是否生效（有展开且改过任何字段时视为已调整） */

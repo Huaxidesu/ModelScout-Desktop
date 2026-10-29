@@ -57,7 +57,12 @@ function onEffortUpdate(
           <th v-if="v2" class="px-2 py-1 font-medium" title="capabilities.temperature">温度</th>
           <th class="px-2 py-1 font-medium">上下文</th>
           <th v-if="v2" class="px-2 py-1 font-medium" title="limit.input">输入上限</th>
-          <th class="px-2 py-1 font-medium">输出上限</th>
+          <th
+            class="px-2 py-1 font-medium"
+            title="limit.output。留空 = 不写该字段，交给工具自己决定。部分网关按 max_tokens 预扣配额，填太大（如模型自报的 1M）会让每次请求直接 429，建议不超过 128K。"
+          >
+            输出上限
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -186,6 +191,18 @@ function onEffortUpdate(
         强度档位对应 v2 的 capabilities.reasoning.effort（可多选、可输入自定义档位）；
         预算是思考 token 的区间。
       </template>
+    </div>
+    <div class="flex items-start gap-2 border-t border-ms-border px-2 py-1 text-[10px] text-ms-text-faint">
+      <NTag size="tiny" :bordered="false">输出上限默认留空</NTag>
+      <span>
+        留空则不写
+        <span class="font-mono">limit.output</span>
+        ，由工具自己决定。部分网关（如 Intern AI）按请求里的
+        <span class="font-mono">max_tokens</span>
+        <span class="text-ms-text">预扣</span>
+        配额，填成模型自报的 1M 会让每次请求直接返回 429 quota exceeded
+        —— 此时控制台余额仍显示充足。需要时建议填 131072（128K）以内。
+      </span>
     </div>
   </div>
 </template>

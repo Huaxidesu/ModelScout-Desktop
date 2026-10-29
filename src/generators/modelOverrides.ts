@@ -43,11 +43,10 @@ export interface ModelEditRow {
   inputLimit: number | null
 }
 
-/** 未探测到上限时的占位（仅用于探测数据的可编辑初值，不写回配置） */
+/** 未探测到上下文上限时的占位（仅用于探测数据的可编辑初值，不写回配置） */
 export const MODEL_EDIT_FALLBACK_CONTEXT = 8192
-export const MODEL_EDIT_FALLBACK_OUTPUT = 4096
 
-/** 未知上限时写入的回退值（与生成器 DEFAULT_* 一致；仅当用户动了数值框才写） */
+/** 只接受正的有限数字；其余（含 undefined / null / 0）一律视为「未设置」 */
 function num(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
@@ -150,7 +149,17 @@ export function extractDshRows(provider: Record<string, unknown>): ModelEditRow[
   }))
 }
 
-/** 从探测结果（ModelInfo）提取编辑行（一键填写用；未知上限给回退初值） */
+/**
+ * 从探测结果（ModelInfo）提取编辑行（一键填写用）。
+ *
+ * 上下文上限缺失时给回退初值；**输出上限默认留空**（null）。
+ *
+ * 为什么输出上限不预填：探测到的 `maxOutputLimit` 只是模型「自报」的能力，
+ * 不代表网关允许一次请求就用这么多。部分网关（Intern AI 的 tokenplan）
+ * 按请求里的 `max_tokens` **预扣**配额，把自报的 1M 原样写进配置后，
+ * 每一次请求都会直接 429 quota exceeded —— 而控制台余额看起来还很充足。
+ * 因此默认不替用户决定，需要大输出时在参数表里手动填。
+ */
 export function rowsFromProbeModels(models: ModelInfo[]): ModelEditRow[] {
   return models.map((m) => ({
     id: m.id,
@@ -159,7 +168,7 @@ export function rowsFromProbeModels(models: ModelInfo[]): ModelEditRow[] {
     vision: m.supportsVision === 'supported',
     tools: m.supportsTools === 'supported',
     contextWindow: m.contextLimit > 0 ? m.contextLimit : MODEL_EDIT_FALLBACK_CONTEXT,
-    maxOutput: m.maxOutputLimit > 0 ? m.maxOutputLimit : MODEL_EDIT_FALLBACK_OUTPUT,
+    maxOutput: null,
     effort: null,
     budgetMin: null,
     budgetMax: null,
@@ -178,8 +187,8 @@ function clone<T>(value: T): T {
 /**
  * 把编辑结果按 OpenCode 世代写回 provider（返回新对象，不改入参）。
  *
- * 只写「与 original 不同的字段」；limit 需要成对出现（schema 约束），
- * 因此改了其中一个而另一个缺失时，用回退值补齐。
+ * 只写「与 original 不同的字段」；`limit` 的 context / output 各自可选，
+ * 不强制成对，也不在缺失时补回退值（早期按「必须成对」实现，已纠正）。
  */
 export function applyOpenCodeRows(
   provider: Record<string, unknown>,
@@ -270,12 +279,8 @@ export function applyOpenCodeRows(
           if (row.inputLimit === null) delete limit.input
           else limit.input = row.inputLimit
         }
-        // context/output 沿用 v1 的成对习惯：只改一侧时另一侧补齐
-        if (row.contextWindow !== before.contextWindow || row.maxOutput !== before.maxOutput) {
-          if (limit.context === undefined) limit.context = before.contextWindow ?? MODEL_EDIT_FALLBACK_CONTEXT
-          if (limit.output === undefined) limit.output = before.maxOutput ?? MODEL_EDIT_FALLBACK_OUTPUT
-        }
-        entry.limit = limit
+        // context / output 各自可选（实测 schema 不要求成对），不再补回退值
+        if (Object.keys(limit).length > 0) entry.limit = limit
       }
     } else {
       if (row.tools !== before.tools && row.tools !== null) entry.tool_call = row.tools
@@ -291,10 +296,8 @@ export function applyOpenCodeRows(
         if (row.maxOutput !== before.maxOutput && row.maxOutput !== null) {
           limit.output = row.maxOutput
         }
-        // schema 要求成对：只改了一侧时，另一侧沿用原值，原值缺失用回退
-        if (limit.context === undefined) limit.context = before.contextWindow ?? MODEL_EDIT_FALLBACK_CONTEXT
-        if (limit.output === undefined) limit.output = before.maxOutput ?? MODEL_EDIT_FALLBACK_OUTPUT
-        entry.limit = limit
+        // 同上：两个字段各自可选，不补回退值
+        if (Object.keys(limit).length > 0) entry.limit = limit
       }
     }
 
@@ -376,6 +379,10 @@ export function applyDshRows(
 /**
  * 把编辑行覆盖回 ModelInfo 列表（返回新数组，不改入参）。
  * 一键填写的合并/生成都吃 GenerateContext.models，覆盖后无需改动生成器。
+ *
+ * `maxOutput` 为 null 表示「不填」——映射成 0（未指定），而不是回退到
+ * 探测值，生成器据此省略 `limit.output`。这是「输出上限默认留空」的
+ * 落地位置（原因见 rowsFromProbeModels）。
  */
 export function applyRowsToProbeModels(models: ModelInfo[], rows: ModelEditRow[]): ModelInfo[] {
   return models.map((model) => {
@@ -387,7 +394,7 @@ export function applyRowsToProbeModels(models: ModelInfo[], rows: ModelEditRow[]
       supportsVision: row.vision === null ? model.supportsVision : row.vision ? 'supported' : 'unsupported',
       supportsTools: row.tools === null ? model.supportsTools : row.tools ? 'supported' : 'unsupported',
       contextLimit: row.contextWindow ?? model.contextLimit,
-      maxOutputLimit: row.maxOutput ?? model.maxOutputLimit,
+      maxOutputLimit: row.maxOutput ?? 0,
     }
   })
 }

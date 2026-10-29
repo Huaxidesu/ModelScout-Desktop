@@ -1,7 +1,7 @@
 {
   "name": "modelscout-desktop",
   "private": true,
-  "version": "0.3.6",
+  "version": "0.3.7",
   "type": "module",
   "description": "ModelScout —— 大模型 API 探测与配置生成桌面应用",
   "license": "PolyForm-Noncommercial-1.0.0",
